@@ -33,7 +33,7 @@
   "dependencies": {
     "@babel/runtime": "^7.16.7",
     "codemirror": "^5.65.0",
-    "d3": "^3.1.5",
+    "d3": "^7.4.4",
     "jquery": "1.11.3",
     "jquery-ui": "1.12.1",
     "nunjucks": "^3.2.3",
