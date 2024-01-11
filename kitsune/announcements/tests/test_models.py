@@ -37,17 +37,19 @@ class AnnouncementModelTests(TestCase):
 
     def test_group_excluded(self):
         """Announcements in a group are not shown."""
-        AnnouncementFactory(group=self.group)
+        announcement = AnnouncementFactory()
+        announcement.groups.add(self.group)
         self.assertEqual(0, Announcement.get_site_wide().count())
 
-    def test_get_for_group_id(self):
+    def test_get_for_groups(self):
         """If no groups are passed, nothing is returned."""
         # Site-wide announcement
         AnnouncementFactory()
         # Announcement in a group.
-        a = AnnouncementFactory(group=self.group)
+        a = AnnouncementFactory()
+        a.groups.add(self.group)
 
-        group_ann = Announcement.get_for_group_id(self.group.id)
+        group_ann = Announcement.get_for_groups([self.group.id])
         self.assertEqual(1, len(group_ann))
         self.assertEqual(a, group_ann[0])
 

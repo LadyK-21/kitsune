@@ -5,11 +5,11 @@ import trackEvent from "sumo/js/analytics";
 (function($) {
   'use strict';
 
-  $(document).ready(function() {
+  jQuery(function() {
     initFolding();
     initAnnouncements();
 
-    $('#delete-profile-username-input').keyup(function(ev) {
+    $('#delete-profile-username-input').on('keyup', function(ev) {
       var username = $('#delete-profile-username').val();
       var inputUsername = $('#delete-profile-username-input').val();
       if (inputUsername === username) {
@@ -19,7 +19,7 @@ import trackEvent from "sumo/js/analytics";
       }
     });
 
-    $(window).scroll(_throttle(function() {
+    $(window).on('scroll', _throttle(function() {
       if ($(window).scrollTop() > $('body > header').outerHeight()) {
         $('body').addClass('scroll-header');
       } else {
@@ -27,7 +27,7 @@ import trackEvent from "sumo/js/analytics";
       }
     }, 100));
 
-    $('.ui-truncatable .show-more-link').click(function(ev) {
+    $('.ui-truncatable .show-more-link').on('click', function(ev) {
       ev.preventDefault();
       $(this).closest('.ui-truncatable').removeClass('truncated');
     });
@@ -55,7 +55,7 @@ import trackEvent from "sumo/js/analytics";
     $(document).on('change', 'select[data-submit]', function() {
       var $this = $(this);
       var $form = ($this.data('submit')) ? $('#' + $this.data('submit')) : $this.closest('form');
-      $form.submit();
+      $form.trigger('submit');
     });
 
     $('[data-close-memory="remember"]').each(function() {
@@ -127,11 +127,12 @@ import trackEvent from "sumo/js/analytics";
 
     $('[data-ui-type="tabbed-view"]').each(function() {
       var $tv = $(this);
-      var $tabs = $tv.children('[data-tab-role="tabs"]').children();
+      var $tabs = $tv.children('[data-tab-role="tabs"]').children().children();
       var $panels = $tv.children('[data-tab-role="panels"]').children();
 
       $tabs.each(function(i) {
-        $(this).on('click', function() {
+        $(this).on('click', function(e) {
+          e.preventDefault();
           $panels.hide();
           $panels.eq(i).show();
           $tabs.removeClass('selected');
@@ -184,7 +185,7 @@ import trackEvent from "sumo/js/analytics";
 
         $this.on('click', function(ev) {
           ev.preventDefault();
-          $($this.attr('data-trigger-target'))[0].click();
+          $($this.attr('data-trigger-target'))[0].trigger('click');
           return false;
         });
       }
@@ -201,8 +202,7 @@ import trackEvent from "sumo/js/analytics";
     });
   });
 
-  $(window).load(function() {
-    correctFixedHeader();
+  $(window).on('load', function() {
     $('[data-ui-type="carousel"]').each(function() {
       var $this = $(this);
       var $container = $(this).children().first();
@@ -251,7 +251,7 @@ import trackEvent from "sumo/js/analytics";
   function initFolding() {
     var $folders = $('.sidebar-folding > li');
     // When a header is clicked, expand/contract the menu items.
-    $folders.children('a, span').click(function() {
+    $folders.children('a, span').on("click", function() {
       var $parent = $(this).parent();
       $parent.toggleClass('selected');
       // Store this for future page loads.
@@ -281,15 +281,7 @@ import trackEvent from "sumo/js/analytics";
       }
     });
   }
-
-  function correctFixedHeader() {
-    var headerHeight = document.querySelector('header');
-    var scrollHeight = headerHeight.scrollHeight;
-    if (window.location.hash && document.querySelector(window.location.hash)) {
-      window.scrollBy(0, -scrollHeight);
-    }
-  }
-
+  
   function initAnnouncements() {
     var $announcements = $('#announcements');
 
@@ -314,9 +306,7 @@ import trackEvent from "sumo/js/analytics";
     var $pw = $form.find('input[name="password"]');
     $pw.attr('type', (this.checked) ? 'text' : 'password');
   });
-
-  $(window).on('hashchange', correctFixedHeader);
-
+  
   $(document).on('click', '[data-mozilla-ui-reset]', function(ev) {
     ev.preventDefault();
     // Send event to GA for metrics/reporting purposes.

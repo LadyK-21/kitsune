@@ -12,7 +12,7 @@
             this.handlePassword();
         }
         // Prevent placeholder values from submitting
-        $(input[0].form).submit(function() {
+        $(input[0].form).on("submit", function() {
             if (input.hasClass('placeholder') && input[0].value == input.attr('placeholder')) {
                 input[0].value = '';
             }
@@ -62,7 +62,7 @@
                     input.trigger('focus');
                     $(this).hide();
                 });
-                $(input[0].form).submit(function() {
+                $(input[0].form).on("submit", function() {
                     fakeHTML.remove();
                     input.show()
                 });
@@ -75,17 +75,17 @@
             var input = $(this);
             var placeholder = new Placeholder(input);
             placeholder.show(true);
-            input.focus(function() {
+            input.on('focus', function() {
                 placeholder.hide();
             });
-            input.blur(function() {
+            input.on('blur', function() {
                 placeholder.show(false);
             });
 
             // On page refresh, IE doesn't re-populate user input
             // until the window.onload event is fired.
             if ($.browser.msie) {
-                $(window).load(function() {
+                $(window).on('load', function() {
                     if(input.val()) {
                         input.removeClass("placeholder");
                     }
@@ -93,7 +93,7 @@
                 });
                 // What's even worse, the text cursor disappears
                 // when tabbing between text inputs, here's a fix
-                input.focus(function() {
+                input.on('focus', function() {
                     if(this.value == "") {
                         var range = this.createTextRange();
                         range.collapse(true);

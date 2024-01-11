@@ -1,5 +1,5 @@
 @use '../config' as c;
-@use '../protocol' as p;
+@use 'protocol/css/includes/lib' as p;
 
 .forum {
   &--question-item {
@@ -660,10 +660,6 @@
 
     .main-content {
       padding-left: 55px;
-
-      ul, ol {
-        padding-left: 0;
-      };
     }
   }
 }

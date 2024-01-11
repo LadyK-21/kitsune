@@ -1,5 +1,5 @@
 @use './mixins' as c;
-@use '../protocol' as p;
+@use '@mozilla-protocol/core/protocol/css/includes/lib' as p;
 @use './color-swatches' as swatches;
 
 :root {
@@ -42,7 +42,7 @@
   --code-font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
 
   --global-margin: 1rem;
-  --global-radius: #{p.$spacing-xs};
+  --global-radius: #{p.$border-radius-sm};
 
   // form fields
   --focus-shadow: 0 0 0 #{p.$spacing-xs} rgba(0, 96, 223, 0.3), 0 0 0 2px rgb(0, 138, 234);

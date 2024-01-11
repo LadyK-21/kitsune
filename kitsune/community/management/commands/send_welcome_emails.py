@@ -5,7 +5,7 @@ from django.contrib.auth.models import User
 from django.contrib.sites.models import Site
 from django.core.management.base import BaseCommand
 from django.db.models import F, Q
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from kitsune.questions.models import Answer
 from kitsune.sumo.email_utils import make_mail, safe_translation, send_messages
@@ -28,7 +28,7 @@ class Command(BaseCommand):
 
         # Answers
 
-        answer_filter = Q(created__lte=wait_period)
+        answer_filter = Q(created__range=(datetime.min, wait_period))
         answer_filter &= ~Q(question__creator=F("creator"))
         answer_filter &= Q(creator__profile__first_answer_email_sent=False)
 
@@ -52,7 +52,7 @@ class Command(BaseCommand):
 
         # Localization
 
-        l10n_filter = Q(created__lte=wait_period)
+        l10n_filter = Q(created__range=(datetime.min, wait_period))
         l10n_filter &= ~Q(document__locale=settings.WIKI_DEFAULT_LANGUAGE)
         l10n_filter &= Q(creator__profile__first_l10n_email_sent=False)
 

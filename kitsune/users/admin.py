@@ -94,7 +94,7 @@ class ProfileAdmin(admin.ModelAdmin):
         else:
             return obj.user.username
 
-    full_user.short_description = "User"
+    full_user.short_description = "User"  # type: ignore
 
     def save_model(self, request, obj, form, change):
         delete_avatar = form.cleaned_data.pop("delete_avatar", False)
@@ -111,6 +111,7 @@ class AccountEventAdmin(admin.ModelAdmin):
         "event_type",
         "status",
     )
+    search_fields = ["profile__user__username", "profile__name", "status", "fxa_uid"]
     autocomplete_fields = ["profile"]
 
     class Meta:

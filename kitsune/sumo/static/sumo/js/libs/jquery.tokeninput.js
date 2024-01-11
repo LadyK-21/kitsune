@@ -208,7 +208,7 @@ $.TokenList = function (input, url_or_data, settings) {
             $(this).val("");
         })
         .bind("keyup keydown blur update", resize_input)
-        .keydown(function (event) {
+        .on('keydown', function (event) {
             var previous_token;
             var next_token;
 
@@ -257,7 +257,7 @@ $.TokenList = function (input, url_or_data, settings) {
                     if(!$(this).val().length) {
                         if(selected_token) {
                             delete_token($(selected_token));
-                            hidden_input.change();
+                            hidden_input.trigger('change');
                         } else if(previous_token.length) {
                             select_token($(previous_token.get(0)));
                         }
@@ -277,7 +277,7 @@ $.TokenList = function (input, url_or_data, settings) {
                 case KEY.COMMA:
                   if(selected_dropdown_item) {
                     add_token($(selected_dropdown_item).data("tokeninput"));
-                    hidden_input.change();
+                    hidden_input.trigger('change');
                     return false;
                   }
                   break;
@@ -314,7 +314,7 @@ $.TokenList = function (input, url_or_data, settings) {
     // The list to store the token items in
     var token_list = $("<ul />")
         .addClass(settings.classes.tokenList)
-        .click(function (event) {
+        .on("click", function (event) {
             var li = $(event.target).closest("li");
             if(li && li.get(0) && $.data(li.get(0), "tokeninput")) {
                 toggle_select_token(li);
@@ -490,10 +490,10 @@ $.TokenList = function (input, url_or_data, settings) {
         $("<span>" + settings.deleteText + "</span>")
             .addClass(settings.classes.tokenDelete)
             .appendTo(this_token)
-            .click(function () {
+            .on("click", function () {
                 if (!settings.disabled) {
                     delete_token($(this).parent());
-                    hidden_input.change();
+                    hidden_input.trigger('change');
                     return false;
                 }
             });
@@ -713,7 +713,7 @@ $.TokenList = function (input, url_or_data, settings) {
                 })
                 .mousedown(function (event) {
                     add_token($(event.target).closest("li").data("tokeninput"));
-                    hidden_input.change();
+                    hidden_input.trigger('change');
                     return false;
                 })
                 .hide();

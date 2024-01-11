@@ -5,6 +5,7 @@ from datetime import datetime
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.db import models
+from django.db.models.functions import Upper
 from django.utils.translation import gettext_lazy as _lazy
 from timezone_field import TimeZoneField
 
@@ -19,8 +20,32 @@ log = logging.getLogger("k.users")
 
 
 SHA1_RE = re.compile("^[a-f0-9]{40}$")
-CONTRIBUTOR_GROUP = "Registered as contributor"
 SET_ID_PREFIX = "https://schemas.accounts.firefox.com/event/"
+
+
+class ContributionAreas(models.TextChoices):
+    KB = "kb-contributors", _lazy("KB Contributors")
+    L10N = "l10n-contributors", _lazy("L10n Contributors")
+    FORUM = "forum-contributors", _lazy("Forum Contributors")
+    SOCIAL = "social-contributors", _lazy("Social media Contributors")
+    MOBILE = "mobile-contributors", _lazy("Mobile support Contributors")
+
+    @classmethod
+    def has_value(cls, value):
+        return value in cls._value2member_map_
+
+    @classmethod
+    def get_values(cls):
+        return [item.value for item in cls]
+
+    @classmethod
+    def get_groups(cls):
+        """Transitional class method that will return both old and new groups."""
+        return cls.get_values() + settings.LEGACY_CONTRIBUTOR_GROUPS
+
+    @classmethod
+    def has_member(cls, value):
+        return value in cls._member_names_
 
 
 @auto_delete_files
@@ -34,7 +59,7 @@ class Profile(ModelBase):
         max_length=255, null=True, blank=True, verbose_name=_lazy("Display name")
     )
     public_email = models.BooleanField(  # show/hide email
-        default=False, verbose_name=_lazy("Make my email address visible to logged in users")
+        default=False, verbose_name=_lazy("Make my email address visible to signed in users")
     )
     avatar = models.ImageField(
         upload_to=settings.USER_AVATAR_PATH,
@@ -49,7 +74,6 @@ class Profile(ModelBase):
         verbose_name=_lazy("Biography"),
         help_text=_lazy(
             "Some HTML supported: &#x3C;abbr title&#x3E; "
-            + "&#x3C;acronym title&#x3E; &#x3C;b&#x3E; "
             + "&#x3C;blockquote&#x3E; &#x3C;code&#x3E; "
             + "&#x3C;em&#x3E; &#x3C;i&#x3E; &#x3C;li&#x3E; "
             + "&#x3C;ol&#x3E; &#x3C;strong&#x3E; &#x3C;ul&#x3E;. "
@@ -107,6 +131,7 @@ class Profile(ModelBase):
     updated_column_name = "user__date_joined"
 
     class Meta(object):
+        indexes = [models.Index(Upper("name"), name="upper_name_idx")]
         permissions = (
             ("view_karma_points", "Can view karma points"),
             ("deactivate_users", "Can deactivate users"),
@@ -276,7 +301,7 @@ class RegistrationProfile(models.Model):
         """
         return True
 
-    activation_key_expired.boolean = True
+    activation_key_expired.boolean = True  # type: ignore
 
 
 class EmailChange(models.Model):
@@ -313,7 +338,7 @@ class Deactivation(models.Model):
 
 
 class AccountEvent(models.Model):
-    """Stores the events received from Firefox Accounts.
+    """Stores the events received from Mozilla accounts.
 
     These events are processed by celery and the correct status is assigned in each entry.
     """

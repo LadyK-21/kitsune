@@ -50,6 +50,7 @@ npm-debug.log
 .python-version
 .pylint*
 .devcontainer.code-workspace
+.devcontainer/.*CommandMarker
 assets/
 .gnupg
 celerybeat-schedule
@@ -59,5 +60,14 @@ celerybeat.pid
 *.zip
 dist/
 .mysql_history
+.psql_history
 .local
 .pdbhistory
+.minikube
+locust*
+.dotnet
+.vim
+.pytest_cache/
+geckodriver.log
+chromedriver.log
+.node_repl_history

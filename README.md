@@ -1,7 +1,10 @@
 # Kitsune
 
+![Status Sustain](https://img.shields.io/badge/Status-Sustain-green)
+
 Kitsune is the platform that powers [SuMo (support.mozilla.org)](https://support.mozilla.org)
 
+## Usage
 It is a [Django](http://www.djangoproject.com/) application. There is [documentation](https://kitsune.readthedocs.io/en/latest/) online.
 
 ## Deployment
@@ -13,3 +16,11 @@ By participating in this project, you're agreeing to uphold the [Mozilla Communi
 ## Contribute
 
 See our [contribution guide](https://kitsune.readthedocs.io/en/latest/contributors.html), or dive into [setting up your development environment](https://kitsune.readthedocs.io/en/latest/hacking_howto.html).
+
+## Issues
+We use [Bugzilla](https://bugzilla.mozilla.org/enter_bug.cgi?product=support.mozilla.org) for submitting and prioritizing issues.
+
+## Thanks to all of our contributors ❤️
+<a href = "https://github.com/mozilla/kitsune/contributors">
+  <img src = "https://contrib.rocks/image?repo=mozilla/kitsune"/>
+</a>

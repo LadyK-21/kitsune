@@ -88,12 +88,12 @@
 
 		bind: function() {
 
-			var check = $.proxy(function(){
+			var check = (function(){
 				this.check();
 				return true;
-			}, this);
+			}).bind(this);
 
-			this.unbind();
+			this.off && this.off();
 
 			this.el
 				.bind('keyup.autoResize', check)
@@ -105,7 +105,7 @@
 		},
 
 		unbind: function() {
-			this.el.unbind('.autoResize');
+			this.el.off('.autoResize');
 		},
 
 		createClone: function() {
@@ -211,7 +211,7 @@
 		},
 
 		destroy: function() {
-			this.unbind();
+			this.off && this.off();
 			this.el.removeData('AutoResizer');
 			this.clone.remove();
 			delete this.el;

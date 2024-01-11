@@ -3,7 +3,7 @@ from urllib.parse import urlparse, parse_qs
 
 from django.conf import settings
 from django.template.loader import render_to_string
-from django.utils.translation import gettext_lazy as _lazy, ugettext as _
+from django.utils.translation import gettext_lazy as _lazy, gettext as _
 
 from sentry_sdk import capture_exception
 from wikimarkup.parser import Parser, ALLOWED_TAGS
@@ -11,7 +11,6 @@ from wikimarkup.parser import Parser, ALLOWED_TAGS
 from kitsune.gallery.models import Image, Video
 from kitsune.sumo import email_utils
 from kitsune.sumo.urlresolvers import reverse
-
 
 ALLOWED_ATTRIBUTES = {
     "a": ["href", "title", "class", "rel", "data-mozilla-ui-reset", "data-mozilla-ui-preferences"],
@@ -43,13 +42,22 @@ IMAGE_PARAM_VALUES = {
     "valign": ("baseline", "sub", "super", "top", "text-top", "middle", "bottom", "text-bottom"),
 }
 VIDEO_PARAMS = ["height", "width", "modal", "title", "placeholder"]
-YOUTUBE_PLACEHOLDER = "YOUTUBE_EMBED_PLACEHOLDER_%s"
+YOUTUBE_PLACEHOLDER = "<p>YOUTUBE_EMBED_PLACEHOLDER_%s</p>"
+UI_COMPONENT_PLACEHOLDER = "<p>UI_COMPONENT_EMBED_PLACEHOLDER_%s</p>"
+ALLOWED_UI_COMPONENTS = frozenset(["device_migration_wizard", "details_start", "details_end"])
 
 
-def wiki_to_html(wiki_markup, locale=settings.WIKI_DEFAULT_LANGUAGE, nofollow=True, tags=None):
+def wiki_to_html(
+    wiki_markup, locale=settings.WIKI_DEFAULT_LANGUAGE, nofollow=True, tags=None, attributes=None
+):
     """Wiki Markup -> HTML"""
     return WikiParser().parse(
-        wiki_markup, show_toc=False, locale=locale, nofollow=nofollow, tags=tags
+        wiki_markup,
+        show_toc=False,
+        locale=locale,
+        nofollow=nofollow,
+        tags=tags,
+        attributes=attributes,
     )
 
 
@@ -204,8 +212,13 @@ class WikiParser(Parser):
         self.registerInternalLinkHook("Video", self._hook_video)
         self.registerInternalLinkHook("V", self._hook_video)
         self.registerInternalLinkHook("Button", self._hook_button)
+        self.registerInternalLinkHook("UI", self._hook_ui_component)
 
-        self.youtube_videos = []
+        # Register the abbr and acronym tags
+        self.registerTagHook("abbr", self._abbr_tag_hook)
+
+        self.youtube_videos = set()
+        self.ui_components = set()
 
     def parse(
         self,
@@ -217,6 +230,7 @@ class WikiParser(Parser):
         locale=settings.WIKI_DEFAULT_LANGUAGE,
         nofollow=False,
         youtube_embeds=True,
+        ui_component_embeds=True,
         **kwargs,
     ):
         """Given wiki markup, return HTML.
@@ -238,6 +252,10 @@ class WikiParser(Parser):
         :arg nofollow: should links have nofollow set?
         :arg youtube_embeds: should we replace the youtube placeholders
             with the iframes? This is kind of a hack so that subclasses
+            can skip embedding here and do it on their own at the end
+            of parsing.
+        :arg ui_component_embeds: should we replace the UI component
+            placeholders with their HTML? This exists so that subclasses
             can skip embedding here and do it on their own at the end
             of parsing.
         """
@@ -267,7 +285,22 @@ class WikiParser(Parser):
         if youtube_embeds:
             html = self.add_youtube_embeds(html)
 
+        if ui_component_embeds:
+            html = self.add_ui_component_embeds(html)
+
         return html
+
+    def _abbr_tag_hook(self, parser, body, attributes):
+        """<abbr[ title="FullText"]>An Abbreviation</abbr>"""
+        if not body:
+            return ""
+        if "title" in attributes:
+            text = [f"<abbr title='{attributes['title']}'>"]
+        else:
+            text = ["<abbr>"]
+        text.append(body.strip())
+        text.append("</abbr>")
+        return "".join(text)
 
     def add_youtube_embeds(self, html):
         """Insert youtube embeds.
@@ -277,6 +310,18 @@ class WikiParser(Parser):
         """
         for video_id in self.youtube_videos:
             html = html.replace(YOUTUBE_PLACEHOLDER % video_id, generate_youtube_embed(video_id))
+        return html
+
+    def add_ui_component_embeds(self, html):
+        """Insert UI component embeds.
+
+        We need to play this placeholder replacement game because the UI
+        component may use disallowed HTML elements, attributes, and styles.
+        """
+
+        for name in self.ui_components:
+            html = html.replace(UI_COMPONENT_PLACEHOLDER % name, generate_ui_component_embed(name))
+
         return html
 
     def _hook_internal_link(self, parser, space, name):
@@ -353,7 +398,7 @@ class WikiParser(Parser):
                 # The video id is in the v= query param
                 video_id = parse_qs(parsed_url.query)["v"][0]
 
-            self.youtube_videos.append(video_id)
+            self.youtube_videos.add(video_id)
 
             return YOUTUBE_PLACEHOLDER % video_id
 
@@ -376,6 +421,13 @@ class WikiParser(Parser):
             return _lazy('Button of type "%s" does not exist.') % btn_type
 
         return render_to_string(template, {"params": params})
+
+    def _hook_ui_component(self, parser, space, name):
+        if name not in ALLOWED_UI_COMPONENTS:
+            return _lazy('The UI component "%s" does not exist.') % name
+
+        self.ui_components.add(name)
+        return UI_COMPONENT_PLACEHOLDER % name
 
 
 def generate_video(v, params=[]):
@@ -405,6 +457,17 @@ def generate_video(v, params=[]):
 def generate_youtube_embed(video_id):
     """Takes a youtube video id and returns the embed markup."""
     return render_to_string("wikiparser/hook_youtube_embed.html", {"video_id": video_id})
+
+
+def generate_ui_component_embed(name):
+    """Takes a UI component name and returns the embed markup."""
+    match name:
+        case "details_start":
+            return '<section class="mzp-c-details">'
+        case "details_end":
+            return "</section>"
+
+    return render_to_string(f"wikiparser/hook_{name}.html", {"settings": settings})
 
 
 def _get_video_url(video_file):

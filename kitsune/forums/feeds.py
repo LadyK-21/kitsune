@@ -1,7 +1,9 @@
+from django.db.models import F
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils.feedgenerator import Atom1Feed
 from django.utils.html import strip_tags, escape
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 from kitsune import forums as constants
 from kitsune.forums.models import Forum, Thread
@@ -12,7 +14,10 @@ class ThreadsFeed(Feed):
     feed_type = Atom1Feed
 
     def get_object(self, request, forum_slug):
-        return get_object_or_404(Forum, slug=forum_slug)
+        forum = get_object_or_404(Forum, slug=forum_slug)
+        if not forum.allows_viewing_by(request.user):
+            raise Http404
+        return forum
 
     def title(self, forum):
         return _("Recently updated threads in %s") % forum.name
@@ -24,7 +29,9 @@ class ThreadsFeed(Feed):
         return forum.description
 
     def items(self, forum):
-        return forum.thread_set.order_by("-last_post__created")[: constants.THREADS_PER_PAGE]
+        return forum.thread_set.order_by(F("last_post__created").desc(nulls_last=True))[
+            : constants.THREADS_PER_PAGE
+        ]
 
     def item_title(self, item):
         return item.title
@@ -40,7 +47,10 @@ class PostsFeed(Feed):
     feed_type = Atom1Feed
 
     def get_object(self, request, forum_slug, thread_id):
-        return get_object_or_404(Thread, pk=thread_id)
+        thread = get_object_or_404(Thread, pk=thread_id)
+        if not thread.forum.allows_viewing_by(request.user):
+            raise Http404
+        return thread
 
     def title(self, thread):
         return _("Recent posts in %s") % thread.title

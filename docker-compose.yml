@@ -12,32 +12,28 @@ services:
     stdin_open: true
     tty: true
     depends_on:
-      - mariadb
-      - elasticsearch7
+      - postgres
+      - elasticsearch
       - kibana
       - redis
       - celery
-      - celery-flower
       - mailcatcher
     ports:
       - "8000:8000"
 
-  mariadb:
-    image: mariadb:10.4
+  postgres:
+    image: postgres:15.3
     environment:
-      - MYSQL_ROOT_PASSWORD=kitsune
-      - MYSQL_USER=kitsune
-      - MYSQL_PASSWORD=kitsune
-      - MYSQL_DATABASE=kitsune
-    entrypoint:
-      - docker-entrypoint.sh
-      - --character-set-server=utf8
-      - --collation-server=utf8_unicode_ci
-      - --sql-mode=ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
+      - POSTGRES_PASSWORD=kitsune
+      - POSTGRES_USER=kitsune
+      - POSTGRES_DB=kitsune
+      - LC_ALL=C.UTF-8
+    ports:
+      - "5432:5432"
     volumes:
-      - mysqlvolume:/var/lib/mysql
+      - pgvolume:/var/lib/postgresql/data
 
-  elasticsearch7:
+  elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:7.10.2
     environment:
       - discovery.type=single-node
@@ -53,8 +49,8 @@ services:
     ports:
       - 5601:5601
     environment:
-      ELASTICSEARCH_URL: http://elasticsearch7:9200
-      ELASTICSEARCH_HOSTS: http://elasticsearch7:9200
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
 
   redis:
     image: redis:3
@@ -63,29 +59,14 @@ services:
     build:
       context: .
       target: base
-    command: celery -A kitsune worker -l info -n default@%h
+    command: celery -A kitsune worker -l info -n default@%h -Q celery,priority
     env_file: .env
     volumes:
       - ./:/app:delegated
     user: ${UID:-kitsune}
     depends_on:
-      - mariadb
+      - postgres
       - redis
-
-  celery-flower:
-    build:
-      context: .
-      target: base
-    command: celery -A kitsune flower -l info --address=0.0.0.0 --port=5555
-    env_file: .env
-    volumes:
-      - ./:/app:delegated
-    user: ${UID:-kitsune}
-    depends_on:
-      - mariadb
-      - redis
-    ports:
-      - "5555:5555"
 
   mailcatcher:
     image: schickling/mailcatcher
@@ -93,4 +74,4 @@ services:
       - "1080:1080"
 
 volumes:
-  mysqlvolume:
+  pgvolume:

@@ -1,26 +1,30 @@
 import json
 import re
 import sys
-from contextlib import contextmanager
 from datetime import datetime
 from functools import lru_cache
+from urllib.parse import urlparse
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.contrib.sites.models import Site
 from django.db import models
 from django.db.models.signals import pre_delete
 from django.templatetags.static import static
-from django.utils import translation
-from django.utils.http import is_safe_url, urlencode
-from ratelimit.utils import is_ratelimited as rl_is_ratelimited
+from django.utils.encoding import iri_to_uri
+from django.utils.http import url_has_allowed_host_and_scheme, urlencode
+from django_ratelimit.core import is_ratelimited as is_ratelimited_core
 from timeout_decorator import timeout
 
 from kitsune.journal.models import Record
 from kitsune.lib.tlds import VALID_TLDS
 from kitsune.sumo import paginator
 
+
 POTENTIAL_LINK_REGEX = re.compile(r"[^\s/]+\.([^\s/.]{2,})")
 POTENTIAL_IP_REGEX = re.compile(r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}")
+
+User: models.Model = get_user_model()
 
 
 def paginate(request, queryset, per_page=20, paginator_cls=paginator.Paginator, **kwargs):
@@ -128,12 +132,23 @@ def get_next_url(request):
     else:
         url = request.META.get("HTTP_REFERER")
 
-    if not settings.DEBUG and not is_safe_url(
+    if not url:
+        return None
+
+    try:
+        url_info = urlparse(url)
+    except ValueError:
+        return None
+
+    if url_info.scheme and url_info.scheme not in {"http", "https"}:
+        return None
+
+    if not settings.DEBUG and not url_has_allowed_host_and_scheme(
         url, allowed_hosts={Site.objects.get_current().domain}
     ):
         return None
 
-    return url
+    return iri_to_uri(url)
 
 
 class TruncationException(Exception):
@@ -163,32 +178,6 @@ def truncated_json_dumps(obj, max_length, key, ensure_ascii=False):
         raise TruncationException("Can't truncate enough to satisfy " "`max_length`.")
     dupe[key] = dupe[key][:-diff]
     return json.dumps(dupe, ensure_ascii=ensure_ascii)
-
-
-@contextmanager
-def uselocale(locale):
-    """
-    Context manager for setting locale and returning to previous locale.
-
-    This is useful for when doing translations for things run by
-    celery workers or out of the HTTP request handling path. Example:
-
-        with uselocale('xx'):
-            subj = _('Subject of my email')
-            msg = render_email(email_template, email_kwargs)
-            mail.send_mail(subj, msg, ...)
-
-    In Kitsune, you can get the right locale from Profile.locale and
-    also request.LANGUAGE_CODE.
-
-    If Kitsune is handling an HTTP request already, you don't have to
-    run uselocale---the locale will already be set correctly.
-
-    """
-    currlocale = translation.get_language()
-    translation.activate(locale)
-    yield
-    translation.activate(currlocale)
 
 
 class Progress(object):
@@ -254,32 +243,34 @@ class Progress(object):
         sys.stdout.flush()
 
 
-def is_ratelimited(request, name, rate, method=["POST"], skip_if=lambda r: False):
+def is_ratelimited(request, name, rate, method="POST"):
     """
-    Reimplement ``ratelimit.helpers.is_ratelimited``, with sumo-specific details:
+    Wraps ``ratelimit.core.is_ratelimited`` with sumo-specific details:
 
     * Always check for the bypass rate limit permission.
     * Log times when users are rate limited.
     * Always uses ``user_or_ip`` for the rate limit key.
+    * Adds the Boolean attribute "limited" to the request.
     """
-    if skip_if(request) or request.user.has_perm("sumo.bypass_ratelimit"):
+    if request.user.has_perm("sumo.bypass_ratelimit"):
         request.limited = False
-    else:
-        # TODO: make sure 'group' value below is sufficient
-        # TODO: make sure 'user_or_ip' is a valid replacement for
-        # old/deleted custom user_or_ip method
-        rl_is_ratelimited(
-            request, increment=True, group="sumo.utils.is_ratelimited", rate=rate, key="user_or_ip"
+        return False
+
+    if limited := is_ratelimited_core(
+        request, group=name, key="user_or_ip", rate=rate, method=method, increment=True
+    ):
+        # We only record a ratelimit event for this counter.
+        if request.user.is_authenticated:
+            key = f"user '{request.user.username}'"
+        else:
+            key = f"anonymous user {request.META['REMOTE_ADDR']}"
+        Record.objects.info(
+            "sumo.ratelimit", "{key} hit the rate limit for {name}", key=key, name=name
         )
-        if request.limited:
-            if hasattr(request, "user") and request.user.is_authenticated:
-                key = 'user "{}"'.format(request.user.username)
-            else:
-                ip = request.META.get("HTTP_X_CLUSTER_CLIENT_IP", request.META["REMOTE_ADDR"])
-                key = "anonymous user ({})".format(ip)
-            Record.objects.info(
-                "sumo.ratelimit", "{key} hit the rate limit for {name}", key=key, name=name
-            )
+
+    # If the request was already limited, keep it that way.
+    request.limited = getattr(request, "limited", False) or limited
+
     return request.limited
 
 
@@ -371,3 +362,20 @@ def webpack_static(source_path):
             return ""
         url = static(asset)
         return url
+
+
+def is_trusted_user(user: User) -> bool:
+    """Given a user ID, checks for group membership.
+
+    If a user belongs to one of the trusted groups as defined in the project
+    settings, then is considered a trusted user.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    return any(
+        [
+            user.groups.filter(name__in=settings.TRUSTED_GROUPS).exists(),
+            user.is_superuser,
+            user.is_staff,
+        ]
+    )

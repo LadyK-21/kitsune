@@ -13,7 +13,7 @@ import { getQueryParamsAsDict } from "sumo/js/main";
 
   'use strict';
 
-  $(document).ready(function() {
+  $(function() {
     if ($('body').is('.locale-metrics')) {
       // Create the dashboard charts.
 
@@ -41,7 +41,7 @@ import { getQueryParamsAsDict } from "sumo/js/main";
     }
 
     // product selector page reloading
-    $('#product-selector select').change(function() {
+    $('#product-selector select').on('change', function() {
       var val = $(this).val();
       var queryParams = getQueryParamsAsDict(document.location.toString());
 
@@ -151,7 +151,6 @@ import { getQueryParamsAsDict } from "sumo/js/main";
     });
 
   }
-
 
   function makeWikiMetricGraph($container, descriptors, legend, bucket, results) {
     var graph = new Graph($container, {

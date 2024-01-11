@@ -3,7 +3,7 @@ from datetime import date
 from typing import Dict, List
 
 import waffle
-from celery import task
+from celery import shared_task
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.sites.models import Site
@@ -12,11 +12,13 @@ from django.core.exceptions import ValidationError
 from django.core.mail import mail_admins
 from django.db import transaction
 from django.urls import reverse as django_reverse
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
+from requests.exceptions import HTTPError
 from sentry_sdk import capture_exception
 
 from kitsune.kbadge.utils import get_or_create_badge
 from kitsune.sumo import email_utils
+from kitsune.sumo.decorators import skip_if_read_only_mode
 from kitsune.sumo.urlresolvers import reverse
 from kitsune.sumo.utils import chunked
 from kitsune.wiki.badges import WIKI_BADGES
@@ -25,14 +27,14 @@ from kitsune.wiki.models import (
     Revision,
     SlugCollision,
     TitleCollision,
-    points_to_document_view,
+    resolves_to_document_view,
 )
-from kitsune.wiki.utils import BitlyRateLimitException, generate_short_url
+from kitsune.wiki.utils import generate_short_url
 
 log = logging.getLogger("k.task")
 
 
-@task()
+@shared_task
 def send_reviewed_notification(revision_id: int, document_id: int, message: str):
     """Send notification of review to the revision creator."""
 
@@ -92,7 +94,7 @@ def send_reviewed_notification(revision_id: int, document_id: int, message: str)
     email_utils.send_messages(msgs)
 
 
-@task()
+@shared_task
 def send_contributor_notification(
     based_on_ids: List[int], revision_id: int, document_id: int, message: str
 ):
@@ -158,6 +160,7 @@ def send_contributor_notification(
     email_utils.send_messages(msgs)
 
 
+@skip_if_read_only_mode
 def schedule_rebuild_kb():
     """Try to schedule a KB rebuild, if we're allowed to."""
     if not waffle.switch_is_active("wiki-rebuild-on-demand") or settings.CELERY_TASK_ALWAYS_EAGER:
@@ -172,23 +175,30 @@ def schedule_rebuild_kb():
     rebuild_kb.delay()
 
 
-@task
+@shared_task
+@skip_if_read_only_mode
 def add_short_links(doc_ids):
     """Create short_url's for a list of docs."""
     base_url = "https://{0}%s".format(Site.objects.get_current().domain)
     docs = Document.objects.filter(id__in=doc_ids)
     try:
         for doc in docs:
-            # Use django's reverse so the locale isn't included.
-            endpoint = django_reverse("wiki.document", args=[doc.slug])
+            # Use Django's reverse so the locale isn't included.
+            # Since we're not including the locale in the URL, we
+            # should always use the English slug. That ensures that
+            # we'll find and redirect to the translation based on the
+            # locale of the user using the short link.
+            slug = doc.parent.slug if doc.parent else doc.slug
+            endpoint = django_reverse("wiki.document", args=[slug])
             doc.update(share_link=generate_short_url(base_url % endpoint))
-    except BitlyRateLimitException:
+    except HTTPError:
         # The next run of the `generate_missing_share_links` cron job will
         # catch all documents that were unable to be processed.
         pass
 
 
-@task(rate_limit="3/h")
+@shared_task(rate_limit="3/h")
+@skip_if_read_only_mode
 def rebuild_kb():
     """Re-render all documents in the KB in chunks."""
     cache.delete(settings.WIKI_REBUILD_TOKEN)
@@ -203,7 +213,7 @@ def rebuild_kb():
         _rebuild_kb_chunk.apply_async(args=[chunk])
 
 
-@task(rate_limit="5/m")
+@shared_task(rate_limit="5/m")
 def _rebuild_kb_chunk(data):
     """Re-render a chunk of documents.
 
@@ -222,7 +232,7 @@ def _rebuild_kb_chunk(data):
             # If we know a redirect link to be broken (i.e. if it looks like a
             # link to a document but the document isn't there), log an error:
             url = document.redirect_url()
-            if url and points_to_document_view(url) and not document.redirect_document():
+            if url and resolves_to_document_view(url) and not document.redirect_document():
                 log.warn("Invalid redirect document: %d" % pk)
 
             html = document.parse_and_calculate_links()
@@ -254,7 +264,8 @@ def _rebuild_kb_chunk(data):
         transaction.commit()
 
 
-@task()
+@shared_task
+@skip_if_read_only_mode
 def maybe_award_badge(badge_template: Dict, year: int, user_id: int):
     """Award the specific badge to the user if they've earned it."""
     try:
@@ -289,7 +300,8 @@ def maybe_award_badge(badge_template: Dict, year: int, user_id: int):
         return True
 
 
-@task()
+@shared_task
+@skip_if_read_only_mode
 def render_document_cascade(base_doc_id):
     """Given a document, render it and all documents that may be affected."""
 

@@ -98,6 +98,31 @@ class GetNextUrlTests(TestCase):
         r = self.r.get("/", {"next": "//example.com"})
         self.assertEqual(None, get_next_url(r))
 
+    def test_when_empty(self):
+        """Next url is empty"""
+        r = self.r.get("/", {"next": ""})
+        self.assertEqual(None, get_next_url(r))
+
+    def test_when_spaces(self):
+        """Next url contains one or more spaces"""
+        r = self.r.get("/", {"next": "/kb/abc abc abc"})
+        self.assertEqual("/kb/abc%20abc%20abc", get_next_url(r))
+
+    def test_xss_attempt_with_newline(self):
+        """Next url with newline-based xss attempt"""
+        r = self.r.get("/", {"next": "j\navascrip\nt:alert()//"})
+        self.assertEqual(None, get_next_url(r))
+
+    def test_xss_attempt_with_carriage_return(self):
+        """Next url with carriage-return-based xss attempt"""
+        r = self.r.get("/", {"next": "j\ravascrip\rt:alert()//"})
+        self.assertEqual(None, get_next_url(r))
+
+    def test_xss_attempt_with_tab(self):
+        """Next url with tab-based xss attempt"""
+        r = self.r.get("/", {"next": "j\tavascrip\tt:alert()//"})
+        self.assertEqual(None, get_next_url(r))
+
 
 class JSONTests(TestCase):
     def test_truncated_noop(self):
@@ -140,21 +165,73 @@ class ChunkedTests(TestCase):
 
 
 class IsRatelimitedTest(TestCase):
-    def test_ratelimited(self):
-        u = UserFactory()
+    def test_ratelimited_grouping_by_name_and_rate(self):
+        """Ensure that both the name and the rate differentiate the counting group."""
         request = Mock()
-        request.user = u
+        request.user = UserFactory()
         request.limited = False
         request.method = "POST"
 
-        # One call to the rate limit won't trigger it.
-        self.assertEqual(is_ratelimited(request, "test-ratelimited", "1/min"), False)
-        # But two will
-        self.assertEqual(is_ratelimited(request, "test-ratelimited", "1/min"), True)
+        self.assertEqual(is_ratelimited(request, "test1", "1/min"), False)
+        self.assertEqual(is_ratelimited(request, "test2", "1/min"), False)
+        self.assertEqual(is_ratelimited(request, "test1", "1/d"), False)
+        self.assertEqual(is_ratelimited(request, "test1", "1/min"), True)
+
+        request.limited = False
+        self.assertEqual(is_ratelimited(request, "test2", "1/min"), True)
+
+        request.limited = False
+        self.assertEqual(is_ratelimited(request, "test1", "1/d"), True)
+
+    def test_ratelimited_restriction_by_http_method(self):
+        """Ensure that the HTTP method(s) is(are) respected."""
+        request = Mock()
+        request.user = UserFactory()
+        request.limited = False
+
+        request.method = "POST"
+        self.assertEqual(is_ratelimited(request, "test3", "1/min", "GET"), False)
+        self.assertEqual(is_ratelimited(request, "test3", "1/min", "GET"), False)
+
+        request.method = "GET"
+        self.assertEqual(is_ratelimited(request, "test3", "1/min", "GET"), False)
+        self.assertEqual(is_ratelimited(request, "test3", "1/min", "GET"), True)
+
+        request.limited = False
+        request.method = "GET"
+        self.assertEqual(is_ratelimited(request, "test3", "1/min", ("PUT", "POST")), False)
+        request.method = "PUT"
+        self.assertEqual(is_ratelimited(request, "test3", "1/min", ("PUT", "POST")), False)
+        request.method = "POST"
+        self.assertEqual(is_ratelimited(request, "test3", "1/min", ("PUT", "POST")), True)
+
+    def test_ratelimited_when_already_limited(self):
+        """
+        Ensure that if the request is already limited, then it should remain
+        limited, but the counting group should still be incremented when called.
+        """
+        request = Mock()
+        request.user = UserFactory()
+        request.limited = True
+        request.method = "POST"
+
+        num_records_before = Record.objects.count()
+        # This call should return True since the request was already limited,
+        # but it should still increment the "test4 1/min" group.
+        self.assertEqual(is_ratelimited(request, "test4", "1/min"), True)
+        # It should not have logged a record of the ratelimit since it
+        # occurred prior to this call.
+        self.assertEqual(Record.objects.count(), num_records_before)
+
+        request.limited = False
+        # Let's confirm that the previous call really did increment.
+        self.assertEqual(is_ratelimited(request, "test4", "1/min"), True)
+        # This time we should have logged a record since it was our own ratelimit event.
+        self.assertEqual(Record.objects.count(), num_records_before + 1)
 
     def test_ratelimit_bypass(self):
         u = UserFactory()
-        bypass = Permission.objects.get(codename="bypass_ratelimit")
+        bypass, _ = Permission.objects.get_or_create(codename="bypass_ratelimit")
         u.user_permissions.add(bypass)
         request = Mock()
         request.user = u

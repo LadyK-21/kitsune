@@ -1,7 +1,7 @@
 import json
 
 from django.http import HttpResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 from product_details import product_details
 
 from kitsune.products.models import Product, Topic
@@ -31,9 +31,12 @@ def _get_aaq_product_key(slug):
 @check_simple_wiki_locale
 def product_landing(request, slug):
     """The product landing page."""
+    if slug == "firefox-accounts":
+        return redirect(product_landing, slug="mozilla-account", permanent=True)
+
     product = get_object_or_404(Product, slug=slug)
 
-    if request.is_ajax():
+    if request.headers.get("x-requested-with") == "XMLHttpRequest":
         # Return a list of topics/subtopics for the product
         topic_list = list()
         for t in Topic.objects.filter(product=product, visible=True):
@@ -69,6 +72,7 @@ def document_listing(request, product_slug, topic_slug, subtopic_slug=None):
     """The document listing page for a product + topic."""
     product = get_object_or_404(Product, slug=product_slug)
     topic = get_object_or_404(Topic, slug=topic_slug, product=product, parent__isnull=True)
+
     template = "products/documents.html"
 
     doc_kw = {"locale": request.LANGUAGE_CODE, "products": [product]}
@@ -79,6 +83,11 @@ def document_listing(request, product_slug, topic_slug, subtopic_slug=None):
     else:
         subtopic = None
         doc_kw["topics"] = [topic]
+
+    request.session["aaq_context"] = {
+        "has_ticketing_support": product.has_ticketing_support,
+        "key": _get_aaq_product_key(product_slug),
+    }
 
     documents, fallback_documents = documents_for(**doc_kw)
 

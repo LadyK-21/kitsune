@@ -8,18 +8,18 @@ from pyquery import PyQuery as pq
 from kitsune.flagit.models import FlaggedObject
 from kitsune.products.tests import ProductFactory, TopicFactory
 from kitsune.questions.models import Answer, AnswerVote, Question, QuestionLocale, QuestionVote
-from kitsune.questions.tests import AnswerFactory, QuestionFactory, TestCaseBase
+from kitsune.questions.tests import AnswerFactory, QuestionFactory
 from kitsune.questions.views import parse_troubleshooting
 from kitsune.search.tests import Elastic7TestCase
 from kitsune.sumo.templatetags.jinja_helpers import urlparams
-from kitsune.sumo.tests import LocalizingClient, eq_msg, get, template_used
+from kitsune.sumo.tests import TestCase, eq_msg, get, template_used
 from kitsune.sumo.urlresolvers import reverse
+from kitsune.tidings.models import Watch
 from kitsune.users.tests import UserFactory, add_permission
 
 
 class AAQSearchTests(Elastic7TestCase):
     search_tests = True
-    client_class = LocalizingClient
 
     def test_ratelimit(self):
         """Make sure posting new questions is ratelimited"""
@@ -36,7 +36,7 @@ class AAQSearchTests(Elastic7TestCase):
             "Firefox/3.6.6",
         }
         p = ProductFactory(slug="firefox")
-        locale = QuestionLocale.objects.get(locale=settings.LANGUAGE_CODE)
+        locale, _ = QuestionLocale.objects.get_or_create(locale=settings.LANGUAGE_CODE)
         p.questions_locales.add(locale)
         TopicFactory(slug="fix-problems", product=p)
         url = urlparams(
@@ -71,11 +71,11 @@ class AAQSearchTests(Elastic7TestCase):
         self.assertEqual(200, res.status_code)
 
 
-class AAQTests(TestCaseBase):
+class AAQTests(TestCase):
     def setUp(self):
         product = ProductFactory(title="Firefox", slug="firefox")
-        for locale in QuestionLocale.objects.all():
-            product.questions_locales.add(locale)
+        locale, _ = QuestionLocale.objects.get_or_create(locale=settings.LANGUAGE_CODE)
+        product.questions_locales.add(locale)
 
     def test_non_authenticated_user(self):
         """
@@ -113,10 +113,8 @@ class AAQTests(TestCaseBase):
         assert template_used(response, "questions/new_question.html")
 
 
-class TestQuestionUpdates(TestCaseBase):
+class TestQuestionUpdates(TestCase):
     """Tests that questions are only updated in the right cases."""
-
-    client_class = LocalizingClient
 
     date_format = "%Y%M%d%H%m%S"
 
@@ -179,7 +177,7 @@ class TestQuestionUpdates(TestCaseBase):
         self._request_and_no_update(url, req_type="POST", data={"remove-tag-foo": 1})
 
 
-class TroubleshootingParsingTests(TestCaseBase):
+class TroubleshootingParsingTests(TestCase):
     def test_empty_troubleshooting_info(self):
         """Test a troubleshooting value that is valid JSON, but junk.
         This should trigger the parser to return None, which should not
@@ -252,10 +250,13 @@ class TroubleshootingParsingTests(TestCaseBase):
         assert parse_troubleshooting(troubleshooting) is not None
 
 
-class TestQuestionList(TestCaseBase):
+class TestQuestionList(TestCase):
     def test_locale_filter(self):
         """Only questions for the current locale should be shown on the
         questions front page for AAQ locales."""
+
+        for locale in (settings.LANGUAGE_CODE, "pt-BR"):
+            QuestionLocale.objects.get_or_create(locale=locale)
 
         self.assertEqual(Question.objects.count(), 0)
         p = ProductFactory(slug="firefox")
@@ -285,7 +286,7 @@ class TestQuestionList(TestCaseBase):
         sub_test("de", "cupcakes?", "donuts?", "pastries?")
 
 
-class TestQuestionReply(TestCaseBase):
+class TestQuestionReply(TestCase):
     def setUp(self):
         u = UserFactory()
         self.client.login(username=u.username, password="testpass")
@@ -327,7 +328,7 @@ class TestQuestionReply(TestCaseBase):
         self.assertEqual(q.needs_info, False)
 
 
-class TestMarkingSolved(TestCaseBase):
+class TestMarkingSolved(TestCase):
     def setUp(self):
         u = UserFactory()
         self.client.login(username=u.username, password="testpass")
@@ -338,18 +339,18 @@ class TestMarkingSolved(TestCaseBase):
         self.answer.is_spam = True
         self.answer.save()
 
-        res = self.client.get(reverse("questions.solve", args=[self.question.id, self.answer.id]))
+        res = self.client.post(reverse("questions.solve", args=[self.question.id, self.answer.id]))
         self.assertEqual(res.status_code, 404)
 
     def test_cannot_mark_answers_on_spam_question(self):
         self.question.is_spam = True
         self.question.save()
 
-        res = self.client.get(reverse("questions.solve", args=[self.question.id, self.answer.id]))
+        res = self.client.post(reverse("questions.solve", args=[self.question.id, self.answer.id]))
         self.assertEqual(res.status_code, 404)
 
 
-class TestVoteAnswers(TestCaseBase):
+class TestVoteAnswers(TestCase):
     def setUp(self):
         u = UserFactory()
         self.client.login(username=u.username, password="testpass")
@@ -375,7 +376,7 @@ class TestVoteAnswers(TestCaseBase):
         self.assertEqual(res.status_code, 404)
 
 
-class TestVoteQuestions(TestCaseBase):
+class TestVoteQuestions(TestCase):
     def setUp(self):
         u = UserFactory()
         self.client.login(username=u.username, password="testpass")
@@ -389,7 +390,7 @@ class TestVoteQuestions(TestCaseBase):
         self.assertEqual(res.status_code, 404)
 
 
-class TestQuestionDetails(TestCaseBase):
+class TestQuestionDetails(TestCase):
     def setUp(self):
         self.question = QuestionFactory()
 
@@ -408,9 +409,7 @@ class TestQuestionDetails(TestCaseBase):
         self.assertEqual(200, res.status_code)
 
 
-class TestRateLimiting(TestCaseBase):
-    client_class = LocalizingClient
-
+class TestRateLimiting(TestCase):
     def _check_question_vote(self, q, ignored):
         """Try and vote on `q`. If `ignored` is false, assert the
         request worked. If `ignored` is True, assert the request didn't
@@ -448,78 +447,79 @@ class TestRateLimiting(TestCaseBase):
             self.assertEqual(AnswerVote.objects.filter(answer=a).count(), votes + 1)
 
     def test_question_vote_limit(self):
-        """Test that an anonymous user's votes are ignored after 10
-        question votes."""
-        questions = [QuestionFactory() for _ in range(11)]
+        """Test that an anonymous user's votes are ignored after 1
+        question vote."""
+        question1 = QuestionFactory()
+        question2 = QuestionFactory()
 
-        # The rate limit is 10 per day. So make 10 requests. (0 through 9)
-        for i in range(10):
-            self._check_question_vote(questions[i], False)
+        # The rate limit is 1 per minute. So make 1 request.
+        self._check_question_vote(question1, False)
 
         # Now make another, it should fail.
-        self._check_question_vote(questions[10], True)
+        self._check_question_vote(question2, True)
 
     def test_answer_vote_limit(self):
-        """Test that an anonymous user's votes are ignored after 10
+        """Test that an anonymous user's votes are ignored after 1
         answer votes."""
         q = QuestionFactory()
         answers = AnswerFactory.create_batch(11, question=q)
 
-        # The rate limit is 10 per day. So make 10 requests. (0 through 9)
-        for i in range(10):
-            self._check_answer_vote(q, answers[i], False)
+        # The rate limit is 1 per minute. So make 1 requests.
+        self._check_answer_vote(q, answers[0], False)
 
         # Now make another, it should fail.
-        self._check_answer_vote(q, answers[10], True)
+        self._check_answer_vote(q, answers[1], True)
 
     def test_question_vote_logged_in(self):
         """This exhausts the rate limit, then logs in, and exhausts it
         again."""
-        questions = [QuestionFactory() for _ in range(11)]
+        question1 = QuestionFactory()
+        question2 = QuestionFactory()
         u = UserFactory(password="testpass")
 
-        # The rate limit is 10 per day. So make 10 requests. (0 through 9)
-        for i in range(10):
-            self._check_question_vote(questions[i], False)
-        # The rate limit has been hit, so this fails.
-        self._check_question_vote(questions[10], True)
+        # The rate limit is 1 per minute. So make 1 request.
+        self._check_question_vote(question1, False)
+
+        # Now make another, it should fail.
+        self._check_question_vote(question2, True)
 
         # Login.
         self.client.login(username=u.username, password="testpass")
-        for i in range(10):
-            self._check_question_vote(questions[i], False)
 
-        # Now the user has hit the rate limit too, so this should fail.
-        self._check_question_vote(questions[10], True)
+        # The rate limit is 1 per minute. So make 1 request.
+        self._check_question_vote(question1, False)
+
+        # Now make another, it should fail.
+        self._check_question_vote(question2, True)
 
         # Logging out out won't help
         self.client.logout()
-        self._check_question_vote(questions[10], True)
+        self._check_question_vote(question2, True)
 
     def test_answer_vote_logged_in(self):
         """This exhausts the rate limit, then logs in, and exhausts it
         again."""
         q = QuestionFactory()
-        answers = [AnswerFactory(question=q) for _ in range(12)]
+        answer1 = AnswerFactory(question=q)
+        answer2 = AnswerFactory(question=q)
         u = UserFactory(password="testpass")
 
-        # The rate limit is 10 per day. So make 10 requests. (0 through 9)
-        for i in range(10):
-            self._check_answer_vote(q, answers[i], False)
+        # The rate limit is 1 per day. So make 1 requests.
+        self._check_answer_vote(q, answer1, False)
+
         # The ratelimit has been hit, so the next request will fail.
-        self._check_answer_vote(q, answers[11], True)
+        self._check_answer_vote(q, answer2, True)
 
         # Login.
         self.client.login(username=u.username, password="testpass")
-        for i in range(10):
-            self._check_answer_vote(q, answers[i], False)
+        self._check_answer_vote(q, answer1, False)
 
         # Now the user has hit the rate limit too, so this should fail.
-        self._check_answer_vote(q, answers[10], True)
+        self._check_answer_vote(q, answer2, True)
 
         # Logging out out won't help
         self.client.logout()
-        self._check_answer_vote(q, answers[11], True)
+        self._check_answer_vote(q, answer2, True)
 
     def test_answers_limit(self):
         """Only four answers per minute can be posted."""
@@ -535,13 +535,25 @@ class TestRateLimiting(TestCaseBase):
 
         self.assertEqual(4, Answer.objects.count())
 
+    def test_question_watch_limit(self):
+        """Test limit of watches on questions per day."""
+        q = QuestionFactory()
+        url = reverse("questions.watch", args=[q.id], locale="en-US")
+        for i in range(15):
+            self.client.post(url, dict(event_type="solution", email=f"ringo{i}@beatles.com"))
 
-class TestEditDetails(TestCaseBase):
+        self.assertEqual(Watch.objects.filter(object_id=q.id).count(), 10)
+
+
+class TestEditDetails(TestCase):
     def setUp(self):
         u = UserFactory()
         add_permission(u, Question, "change_question")
         assert u.has_perm("questions.change_question")
         self.user = u
+
+        for locale in (settings.LANGUAGE_CODE, "hu"):
+            QuestionLocale.objects.get_or_create(locale=locale)
 
         p = ProductFactory()
         t = TopicFactory(product=p)

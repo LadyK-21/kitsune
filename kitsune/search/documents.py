@@ -5,7 +5,7 @@ from kitsune.forums.models import Post
 from kitsune.questions.models import Answer, Question
 from kitsune.search import config
 from kitsune.search.base import SumoDocument
-from kitsune.search.es7_utils import es7_client
+from kitsune.search.es_utils import es_client
 from kitsune.search.fields import SumoLocaleAwareKeywordField, SumoLocaleAwareTextField
 from kitsune.users.models import Profile
 from kitsune.wiki import models as wiki_models
@@ -16,12 +16,14 @@ from kitsune.wiki.config import (
     TEMPLATES_CATEGORY,
 )
 
-connections.add_connection(config.DEFAULT_ES7_CONNECTION, es7_client())
+connections.add_connection(config.DEFAULT_ES_CONNECTION, es_client())
 
 
 class WikiDocument(SumoDocument):
-    updated = field.Date()
+    # Wiki Documents should be merged/updated.
+    update_document = True
 
+    updated = field.Date()
     product_ids = field.Keyword(multi=True)
     topic_ids = field.Keyword(multi=True)
     category = field.Keyword()
@@ -37,12 +39,6 @@ class WikiDocument(SumoDocument):
 
     class Index:
         pass
-
-    @classmethod
-    @property
-    def update_document(cls):
-        """Wiki Documents should be merged/updated."""
-        return True
 
     @classmethod
     def prepare(cls, instance):
@@ -154,8 +150,8 @@ class QuestionDocument(SumoDocument):
     def prepare(cls, instance):
         """Override super method to exclude certain docs."""
         # Add a discard field in the document if the following conditions are met
-        # Question document is spam
-        if instance.is_spam:
+        # Question document is spam or question doesn't have any answers
+        if isinstance(instance, Question) and any([instance.is_spam, instance.num_answers == 0]):
             instance.es_discard_doc = "unindex_me"
 
         return super(QuestionDocument, cls).prepare(instance)
@@ -353,7 +349,7 @@ class ProfileDocument(SumoDocument):
             return InnerDoc(url=avatar)
 
     def prepare_timezone(self, instance):
-        return instance.timezone.zone if instance.timezone else None
+        return str(instance.timezone) if instance.timezone else None
 
     def prepare_product_ids(self, instance):
         return [product.id for product in instance.products.all()]

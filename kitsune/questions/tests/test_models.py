@@ -24,9 +24,9 @@ from kitsune.questions.models import (
 from kitsune.questions.tasks import update_answer_pages
 from kitsune.questions.tests import (
     AnswerFactory,
+    AnswerVoteFactory,
     QuestionFactory,
     QuestionVoteFactory,
-    TestCaseBase,
     tags_eq,
 )
 from kitsune.search.tests import Elastic7TestCase
@@ -38,7 +38,7 @@ from kitsune.users.tests import UserFactory
 from kitsune.wiki.tests import TranslatedRevisionFactory
 
 
-class TestAnswer(TestCaseBase):
+class TestAnswer(TestCase):
     """Test the Answer model"""
 
     def test_new_answer_updates_question(self):
@@ -178,7 +178,7 @@ class TestAnswer(TestCaseBase):
         self.assertEqual(answer_follow.actor_only, False)
 
 
-class TestQuestionMetadata(TestCaseBase):
+class TestQuestionMetadata(TestCase):
     """Tests handling question metadata"""
 
     def setUp(self):
@@ -278,7 +278,7 @@ class TestQuestionMetadata(TestCaseBase):
         assert not _has_beta("10.0", {"11.0b7": "2011-06-01"})
 
 
-class QuestionTests(TestCaseBase):
+class QuestionTests(TestCase):
     """Tests for Question model"""
 
     def test_save_updated(self):
@@ -363,19 +363,19 @@ class QuestionTests(TestCaseBase):
 
         self.assertEqual(q, Question.from_url("/en-US/questions/%s" % q.id))
         self.assertEqual(q, Question.from_url("/es/questions/%s" % q.id))
-        self.assertEqual(q, Question.from_url("/questions/%s" % q.id))
 
     def test_from_url_id_only(self):
-        """Verify question returned from valid URL."""
+        """Verify question returned from URL."""
         # When requesting the id, the existence of the question isn't checked.
         self.assertEqual(123, Question.from_url("/en-US/questions/123", id_only=True))
         self.assertEqual(234, Question.from_url("/es/questions/234", id_only=True))
-        self.assertEqual(345, Question.from_url("/questions/345", id_only=True))
+        self.assertEqual(None, Question.from_url("/questions/345", id_only=True))
 
     def test_from_invalid_url(self):
         """Verify question returned from valid URL."""
         q = QuestionFactory()
 
+        self.assertEqual(None, Question.from_url("/questions/%s" % q.id))
         self.assertEqual(None, Question.from_url("/en-US/questions/%s/edit" % q.id))
         self.assertEqual(None, Question.from_url("/en-US/kb/%s" % q.id))
         self.assertEqual(None, Question.from_url("/random/url"))
@@ -479,8 +479,34 @@ class QuestionTests(TestCaseBase):
         self.assertEqual(f.follow_object, q)
         self.assertEqual(f.actor_only, False)
 
+    def test_helpful_replies(self):
+        """Verify the "helpful_replies" property."""
+        answer1 = AnswerFactory()
+        question = answer1.question
+        AnswerVoteFactory(answer=answer1, helpful=False)
+        answer2 = AnswerFactory(question=question)
+        AnswerVoteFactory(answer=answer2, helpful=True)
+        AnswerVoteFactory(answer=answer2, helpful=False)
+        with self.subTest("ignore answers with no helpful votes"):
+            self.assertEqual(list(question.helpful_replies), [answer2])
+        answer3 = AnswerFactory(question=question)
+        AnswerVoteFactory(answer=answer3, helpful=True)
+        AnswerVoteFactory(answer=answer3, helpful=False)
+        AnswerVoteFactory(answer=answer3, helpful=True)
+        answer4 = AnswerFactory(question=question)
+        AnswerVoteFactory(answer=answer4, helpful=True)
+        AnswerVoteFactory(answer=answer4, helpful=False)
+        AnswerVoteFactory(answer=answer4, helpful=True)
+        AnswerVoteFactory(answer=answer4, helpful=True)
+        with self.subTest("limit to two most helpful answers"):
+            self.assertEqual(set(question.helpful_replies), set([answer3, answer4]))
+        question.solution = answer4
+        question.save()
+        with self.subTest("ignore the solution"):
+            self.assertEqual(list(question.helpful_replies), [answer3])
 
-class AddExistingTagTests(TestCaseBase):
+
+class AddExistingTagTests(TestCase):
     """Tests for the add_existing_tag helper function."""
 
     def setUp(self):

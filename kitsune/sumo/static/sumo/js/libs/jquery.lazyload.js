@@ -12,7 +12,7 @@
         var didScroll = false;
         var loaded = elements.length;
 
-        $(window).bind('scroll', function(e){
+        $(window).on('scroll', function(e){
             didScroll = true;
         });
 
@@ -28,7 +28,7 @@
 
         var intv = setInterval(function() {
             if(loaded <= 0) {
-                $(window).unbind('scroll');
+                $(window).off('scroll');
                 clearInterval(intv);
                 return;
             }
@@ -63,7 +63,7 @@
 
     $.fn.lazyload.loadOriginalImage = function(element, assocAnchor) {
         if(assocAnchor != null) {
-            $(element).load(function() { resetHashPosition(); });
+            $(element).on('load', function() { resetHashPosition(); });
         }
         $(element).attr('src', $(element).data('original-src')).removeData('original-src');
     };

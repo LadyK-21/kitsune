@@ -10,13 +10,14 @@ from django.contrib.auth.models import User
 from django.contrib.contenttypes.fields import GenericForeignKey, GenericRelation
 from django.contrib.contenttypes.models import ContentType
 from django.core.cache import cache
-from django.db import close_old_connections, connection, models
+from django.db import close_old_connections, models
+from django.db.models import Count
+from django.db.models.functions import Now
 from django.db.models.signals import post_save
 from django.db.utils import IntegrityError
 from django.dispatch import receiver
-from django.http import Http404
-from django.urls import resolve
-from django.utils.translation import override as translation_override
+from django.urls import is_valid_path
+from django.utils import translation
 from django.utils.translation import pgettext
 from elasticsearch import ElasticsearchException
 from product_details import product_details
@@ -27,13 +28,15 @@ from kitsune.products.models import Product, Topic
 from kitsune.questions import config
 from kitsune.questions.managers import AnswerManager, QuestionLocaleManager, QuestionManager
 from kitsune.questions.tasks import update_answer_pages, update_question_votes
+from kitsune.sumo.i18n import split_into_language_and_path
 from kitsune.sumo.models import LocaleField, ModelBase
 from kitsune.sumo.templatetags.jinja_helpers import urlparams, wiki_to_html
-from kitsune.sumo.urlresolvers import reverse, split_path
+from kitsune.sumo.urlresolvers import reverse
 from kitsune.tags.models import BigVocabTaggableMixin
 from kitsune.tags.utils import add_existing_tag
 from kitsune.upload.models import ImageAttachment
 from kitsune.wiki.models import Document
+
 
 log = logging.getLogger("k.questions")
 
@@ -48,15 +51,65 @@ class AlreadyTakenException(Exception):
     pass
 
 
-class Question(ModelBase, BigVocabTaggableMixin):
+class VoteBase(ModelBase):
+    created = models.DateTimeField(default=datetime.now, db_index=True)
+    anonymous_id = models.CharField(max_length=40, db_index=True)
+
+    class Meta:
+        abstract = True
+
+    def add_metadata(self, key, value):
+        VoteMetadata.objects.create(vote=self, key=key, value=value[:VOTE_METADATA_MAX_LENGTH])
+
+
+class AAQBase(ModelBase):
+    created = models.DateTimeField(default=datetime.now, db_index=True)
+    updated = models.DateTimeField(default=datetime.now, db_index=True)
+    content = models.TextField()
+    is_spam = models.BooleanField(default=False)
+    marked_as_spam = models.DateTimeField(default=None, null=True)
+    updated_column_name = "updated"
+
+    class Meta:
+        abstract = True
+
+    def has_voted(self, request):
+        """Is the user eligible to vote or
+        did the user already vote for this answer or question?"""
+
+        q_kwargs = {}
+
+        if self.__class__ == Answer:
+            VoteObject = AnswerVote
+            q_kwargs.update({"answer": self})
+        else:
+            VoteObject = QuestionVote
+            q_kwargs.update({"question": self})
+
+        if request.user.is_authenticated:
+            if self.creator == request.user:
+                return True
+            q_kwargs["creator"] = request.user
+            return VoteObject.objects.filter(**q_kwargs).exists()
+        elif request.anonymous.has_id:
+            q_kwargs["anonymous_id"] = request.anonymous.anonymous_id
+            return VoteObject.objects.filter(**q_kwargs).exists()
+        else:
+            return False
+
+    def clear_cached_html(self):
+        cache.delete(self.html_cache_key % self.id)
+
+    def clear_cached_images(self):
+        cache.delete(self.images_cache_key % self.id)
+
+
+class Question(AAQBase, BigVocabTaggableMixin):
     """A support question."""
 
     title = models.CharField(max_length=255)
     creator = models.ForeignKey(User, on_delete=models.CASCADE, related_name="questions")
-    content = models.TextField()
 
-    created = models.DateTimeField(default=datetime.now, db_index=True)
-    updated = models.DateTimeField(default=datetime.now, db_index=True)
     updated_by = models.ForeignKey(
         User, on_delete=models.CASCADE, null=True, blank=True, related_name="questions_updated"
     )
@@ -71,8 +124,6 @@ class Question(ModelBase, BigVocabTaggableMixin):
     is_archived = models.BooleanField(default=False, null=True)
     num_votes_past_week = models.PositiveIntegerField(default=0, db_index=True)
 
-    is_spam = models.BooleanField(default=False)
-    marked_as_spam = models.DateTimeField(default=None, null=True)
     marked_as_spam_by = models.ForeignKey(
         User, on_delete=models.CASCADE, null=True, related_name="questions_marked_as_spam"
     )
@@ -96,7 +147,6 @@ class Question(ModelBase, BigVocabTaggableMixin):
     contributors_cache_key = "question:contributors:%s"
 
     objects = QuestionManager()
-    updated_column_name = "updated"
 
     class Meta:
         ordering = ["-updated"]
@@ -126,17 +176,11 @@ class Question(ModelBase, BigVocabTaggableMixin):
     def content_parsed(self):
         return _content_parsed(self, self.locale)
 
-    def clear_cached_html(self):
-        cache.delete(self.html_cache_key % self.id)
-
     def clear_cached_tags(self):
         cache.delete(self.tags_cache_key % self.id)
 
     def clear_cached_contributors(self):
         cache.delete(self.contributors_cache_key % self.id)
-
-    def clear_cached_images(self):
-        cache.delete(self.images_cache_key % self.id)
 
     def save(self, update=False, *args, **kwargs):
         """Override save method to take care of updated if requested."""
@@ -279,40 +323,24 @@ class Question(ModelBase, BigVocabTaggableMixin):
     def sync_num_votes_past_week(self):
         """Get the number of votes for this question in the past week."""
         last_week = datetime.now().date() - timedelta(days=7)
-        n = QuestionVote.objects.filter(question=self, created__gte=last_week).count()
+        # Use "__range" to ensure the database index is used in Postgres.
+        n = QuestionVote.objects.filter(question=self, created__range=(last_week, Now())).count()
         self.num_votes_past_week = n
         return n
-
-    def has_voted(self, request):
-        """Did the user already vote?"""
-        if request.user.is_authenticated:
-            qs = QuestionVote.objects.filter(question=self, creator=request.user)
-        elif request.anonymous.has_id:
-            anon_id = request.anonymous.anonymous_id
-            qs = QuestionVote.objects.filter(question=self, anonymous_id=anon_id)
-        else:
-            return False
-
-        return qs.exists()
 
     @property
     def helpful_replies(self):
         """Return answers that have been voted as helpful."""
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "SELECT votes.answer_id, "
-                "SUM(IF(votes.helpful=1,1,-1)) AS score "
-                "FROM questions_answervote AS votes "
-                "JOIN questions_answer AS ans "
-                "ON ans.id=votes.answer_id "
-                "AND ans.question_id=%s "
-                "GROUP BY votes.answer_id "
-                "HAVING score > 0 "
-                "ORDER BY score DESC LIMIT 2",
-                [self.id],
-            )
 
-            helpful_ids = [row[0] for row in cursor.fetchall()]
+        helpful_ids = list(
+            AnswerVote.objects.filter(helpful=True, answer__question=self)
+            .order_by()
+            .values("answer")
+            .annotate(score=Count("*"))
+            .filter(score__gt=0)
+            .order_by("-score")
+            .values_list("answer", flat=True)[:2]
+        )
 
         # Exclude the solution if it is set
         if self.solution and self.solution.id in helpful_ids:
@@ -376,7 +404,8 @@ class Question(ModelBase, BigVocabTaggableMixin):
     def recent_asked_count(cls, extra_filter=None):
         """Returns the number of questions asked in the last 24 hours."""
         start = datetime.now() - timedelta(hours=24)
-        qs = cls.objects.filter(created__gt=start, creator__is_active=True)
+        # Use "__range" to ensure the database index is used in Postgres.
+        qs = cls.objects.filter(created__range=(start, Now()), creator__is_active=True)
         if extra_filter:
             qs = qs.filter(extra_filter)
         return qs.count()
@@ -386,10 +415,11 @@ class Question(ModelBase, BigVocabTaggableMixin):
         """Returns the number of questions that have not been answered in the
         last 24 hours.
         """
+        # Use "__range" to ensure the database index is used in Postgres.
         start = datetime.now() - timedelta(hours=24)
         qs = cls.objects.filter(
             num_answers=0,
-            created__gt=start,
+            created__range=(start, Now()),
             is_locked=False,
             is_archived=False,
             creator__is_active=1,
@@ -410,25 +440,18 @@ class Question(ModelBase, BigVocabTaggableMixin):
         from making a million or so db calls).
         """
         parsed = urlparse(url)
-        locale, path = split_path(parsed.path)
+        language, _ = split_into_language_and_path(parsed.path)
 
-        path = "/" + path
+        with translation.override(language):
+            match = is_valid_path(parsed.path)
 
-        try:
-            view, view_args, view_kwargs = resolve(path)
-        except Http404:
+        if not (match and match.url_name == "questions.details"):
             return None
 
-        # Avoid circular import. kitsune.question.views import this.
-        import kitsune.questions.views
-
-        if view != kitsune.questions.views.question_details:
-            return None
-
-        question_id = view_kwargs["question_id"]
+        question_id = int(match.captured_kwargs["question_id"])
 
         if id_only:
-            return int(question_id)
+            return question_id
 
         try:
             question = cls.objects.get(id=question_id)
@@ -470,7 +493,7 @@ class Question(ModelBase, BigVocabTaggableMixin):
         self.solution = answer
         self.save()
         self.add_metadata(solver_id=str(solver.id))
-        QuestionSolvedEvent(answer).fire(exclude=self.creator)
+        QuestionSolvedEvent(answer).fire(exclude=[self.creator])
         actstream.action.send(
             solver, verb="marked as a solution", action_object=answer, target=self
         )
@@ -480,7 +503,7 @@ class Question(ModelBase, BigVocabTaggableMixin):
         """Text to use in elastic more_like_this query."""
         content = [self.title, self.content]
         if self.topic:
-            with translation_override(self.locale):
+            with translation.override(self.locale):
                 # use the question's locale, rather than the user's
                 content += [pgettext("DB: products.Topic.title", self.topic.title)]
 
@@ -763,20 +786,15 @@ class AAQConfig(ModelBase):
         verbose_name = "AAQ configuration"
 
 
-class Answer(ModelBase):
+class Answer(AAQBase):
     """An answer to a support question."""
 
     question = models.ForeignKey("Question", on_delete=models.CASCADE, related_name="answers")
     creator = models.ForeignKey(User, on_delete=models.CASCADE, related_name="answers")
-    created = models.DateTimeField(default=datetime.now, db_index=True)
-    content = models.TextField()
-    updated = models.DateTimeField(default=datetime.now, db_index=True)
     updated_by = models.ForeignKey(
         User, on_delete=models.CASCADE, null=True, blank=True, related_name="answers_updated"
     )
     page = models.IntegerField(default=1)
-    is_spam = models.BooleanField(default=False)
-    marked_as_spam = models.DateTimeField(default=None, null=True)
     marked_as_spam_by = models.ForeignKey(
         User, on_delete=models.CASCADE, null=True, related_name="answers_marked_as_spam"
     )
@@ -788,7 +806,6 @@ class Answer(ModelBase):
     images_cache_key = "answer:images:%s"
 
     objects = AnswerManager()
-    updated_column_name = "updated"
 
     class Meta:
         ordering = ["created"]
@@ -800,12 +817,6 @@ class Answer(ModelBase):
     @property
     def content_parsed(self):
         return _content_parsed(self, self.question.locale)
-
-    def clear_cached_html(self):
-        cache.delete(self.html_cache_key % self.id)
-
-    def clear_cached_images(self):
-        cache.delete(self.images_cache_key % self.id)
 
     def save(self, update=True, no_notify=False, *args, **kwargs):
         """
@@ -841,12 +852,11 @@ class Answer(ModelBase):
             self.question.clear_cached_contributors()
 
             if not no_notify:
-                # tidings
-                # Avoid circular import: events.py imports Question.
-                from kitsune.questions.events import QuestionReplyEvent
-
                 if not self.is_spam:
-                    QuestionReplyEvent(self).fire(exclude=self.creator)
+                    # Avoid circular import
+                    from kitsune.questions.events import QuestionReplyEvent
+
+                    QuestionReplyEvent(self).fire(exclude=[self.creator])
 
                 # actstream
                 actstream.actions.follow(self.creator, self, send_action=False, actor_only=False)
@@ -927,18 +937,6 @@ class Answer(ModelBase):
 
         return num_solutions(self.creator)
 
-    def has_voted(self, request):
-        """Did the user already vote for this answer?"""
-        if request.user.is_authenticated:
-            qs = AnswerVote.objects.filter(answer=self, creator=request.user)
-        elif request.anonymous.has_id:
-            anon_id = request.anonymous.anonymous_id
-            qs = AnswerVote.objects.filter(answer=self, anonymous_id=anon_id)
-        else:
-            return False
-
-        return qs.exists()
-
     @classmethod
     def last_activity_for(cls, user):
         """Returns the datetime of the user's last answer."""
@@ -1003,34 +1001,24 @@ class Answer(ModelBase):
         self.save()
 
 
-class QuestionVote(ModelBase):
+class QuestionVote(VoteBase):
     """I have this problem too.
     Keeps track of users that have problem over time."""
 
     question = models.ForeignKey("Question", on_delete=models.CASCADE, related_name="votes")
-    created = models.DateTimeField(default=datetime.now, db_index=True)
     creator = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="question_votes", null=True
     )
-    anonymous_id = models.CharField(max_length=40, db_index=True)
-
-    def add_metadata(self, key, value):
-        VoteMetadata.objects.create(vote=self, key=key, value=value[:VOTE_METADATA_MAX_LENGTH])
 
 
-class AnswerVote(ModelBase):
+class AnswerVote(VoteBase):
     """Helpful or Not Helpful vote on Answer."""
 
     answer = models.ForeignKey("Answer", on_delete=models.CASCADE, related_name="votes")
     helpful = models.BooleanField(default=False)
-    created = models.DateTimeField(default=datetime.now, db_index=True)
     creator = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="answer_votes", null=True
     )
-    anonymous_id = models.CharField(max_length=40, db_index=True)
-
-    def add_metadata(self, key, value):
-        VoteMetadata.objects.create(vote=self, key=key, value=value[:VOTE_METADATA_MAX_LENGTH])
 
 
 class VoteMetadata(ModelBase):

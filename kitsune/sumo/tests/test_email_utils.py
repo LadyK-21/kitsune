@@ -3,11 +3,11 @@ from unittest.mock import patch
 from django.conf import settings
 from django.contrib.sites.models import Site
 from django.utils.functional import lazy
+from django.utils import translation
 from django.utils.translation import get_language
 
 from kitsune.sumo.email_utils import emails_with_users_and_watches, safe_translation
 from kitsune.sumo.tests import TestCase
-from kitsune.sumo.utils import uselocale
 from kitsune.users.tests import UserFactory
 
 mock_translations = {
@@ -29,7 +29,7 @@ mock_gettext_lazy = lazy(mock_ugettext)
 
 
 def mock_gettext(f):
-    f = patch("django.utils.translation.ugettext", mock_ugettext)(f)
+    f = patch("django.utils.translation.gettext", mock_ugettext)(f)
     f = patch("django.utils.translation.gettext_lazy", mock_gettext_lazy)(f)
     return f
 
@@ -44,20 +44,20 @@ class SafeTranslationTests(TestCase):
     def test_mocked_gettext(self):
         """I'm not entirely sure about the mocking, so test that."""
         # Import translation now so it is affected by the mock.
-        from django.utils.translation import ugettext as _
+        from django.utils.translation import gettext as _
 
-        with uselocale("en-US"):
+        with translation.override("en-US"):
             self.assertEqual(_("Hello"), "Hello")
-        with uselocale("fr"):
+        with translation.override("fr"):
             self.assertEqual(_("Hello"), "Bonjour")
-        with uselocale("es"):
+        with translation.override("es"):
             self.assertEqual(_("Hello"), "Hola")
 
     @mock_gettext
     def test_safe_translation_noop(self):
         """Test that safe_translation doesn't mess with good translations."""
         # Import translation now so it is affected by the mock.
-        from django.utils.translation import ugettext as _
+        from django.utils.translation import gettext as _
 
         @safe_translation
         def simple(locale):
@@ -72,7 +72,7 @@ class SafeTranslationTests(TestCase):
     def test_safe_translation_bad_trans(self):
         """Test that safe_translation insulates from bad translations."""
         # Import translation now so it is affected by the mock.
-        from django.utils.translation import ugettext as _
+        from django.utils.translation import gettext as _
 
         # `safe_translation` will call this with the given locale, and
         # if that fails, fall back to English.
@@ -91,7 +91,7 @@ class SafeTranslationTests(TestCase):
     def test_safe_translation_logging(self, mocked_log):
         """Logging translation errors is really important, so test it."""
         # Import translation now so it is affected by the mock.
-        from django.utils.translation import ugettext as _
+        from django.utils.translation import gettext as _
 
         # Assert that bad translations cause error logging.
         @safe_translation
@@ -109,17 +109,6 @@ class SafeTranslationTests(TestCase):
         self.assertEqual(method_name, "exception")
         assert "Bad translation" in method_args[0]
         self.assertEqual(method_args[1], "fr")
-
-
-class UseLocaleTests(TestCase):
-    def test_uselocale(self):
-        """Test that uselocale does what it says on the tin."""
-        with uselocale("en-US"):
-            self.assertEqual(get_language(), "en-us")
-        with uselocale("de"):
-            self.assertEqual(get_language(), "de")
-        with uselocale("fr"):
-            self.assertEqual(get_language(), "fr")
 
 
 class PremailerTests(TestCase):

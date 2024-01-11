@@ -85,11 +85,11 @@ def job_send_welcome_emails():
     # only run on readonly clusters, where no signals will be triggered:
     skip=(not settings.READ_ONLY),
 )
-@babis.decorator(ping_after=settings.DMS_REINDEX_ES7)
-def job_reindex_es7():
-    # Index items newer than 90 minutes old in ES7
+@babis.decorator(ping_after=settings.DMS_REINDEX_ES)
+def job_reindex_es():
+    # Index items newer than 90 minutes old in ES
     after = (timezone.now() - datetime.timedelta(minutes=90)).isoformat()
-    call_command("es7_reindex --updated-after {}".format(after))
+    call_command("es_reindex --updated-after {}".format(after))
 
 
 # Every 6 hours.
@@ -116,7 +116,7 @@ def job_update_product_details():
     minute="20",
     max_instances=1,
     coalesce=True,
-    skip=settings.READ_ONLY,
+    skip=(settings.READ_ONLY or settings.STAGE),
 )
 @babis.decorator(ping_after=settings.DMS_GENERATE_MISSING_SHARE_LINKS)
 def job_generate_missing_share_links():

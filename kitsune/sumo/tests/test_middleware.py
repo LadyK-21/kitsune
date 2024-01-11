@@ -1,3 +1,4 @@
+from django.core.exceptions import MiddlewareNotUsed
 from django.http import HttpResponse, HttpResponsePermanentRedirect
 from django.test import override_settings
 from django.test.client import RequestFactory
@@ -6,27 +7,31 @@ from kitsune.sumo.middleware import (
     CacheHeadersMiddleware,
     EnforceHostIPMiddleware,
     PlusToSpaceMiddleware,
+    SetRemoteAddrFromForwardedFor,
 )
 from kitsune.sumo.tests import TestCase
 
 
 @override_settings(ENFORCE_HOST=["support.mozilla.org", "all-your-base.are-belong-to.us"])
 class EnforceHostIPMiddlewareTestCase(TestCase):
+    def g_response(*args, **kwargs):
+        return HttpResponse()
+
     def _get_response(self, hostname):
-        mw = EnforceHostIPMiddleware()
+        mw = EnforceHostIPMiddleware(self.g_response)
         rf = RequestFactory()
-        return mw.process_request(rf.get("/", HTTP_HOST=hostname))
+        return mw(rf.get("/", HTTP_HOST=hostname))
 
     def test_valid_domain(self):
         resp = self._get_response("support.mozilla.org")
-        self.assertIsNone(resp)
+        self.assertEqual(resp.status_code, 200)
 
     def test_valid_ip_address(self):
         resp = self._get_response("192.168.200.200")
-        self.assertIsNone(resp)
+        self.assertEqual(resp.status_code, 200)
         # with port
         resp = self._get_response("192.168.200.200:443")
-        self.assertIsNone(resp)
+        self.assertEqual(resp.status_code, 200)
 
     def test_invalid_domain(self):
         resp = self._get_response("none-of-ur-base.are-belong-to.us")
@@ -34,9 +39,13 @@ class EnforceHostIPMiddlewareTestCase(TestCase):
 
 
 class CacheHeadersMiddlewareTestCase(TestCase):
+    def g_response(*args, **kwargs):
+        return HttpResponse()
+
     def setUp(self):
+        self.get_response = self.g_response()
         self.rf = RequestFactory()
-        self.mw = CacheHeadersMiddleware()
+        self.mw = CacheHeadersMiddleware(self.get_response)
 
     @override_settings(CACHE_MIDDLEWARE_SECONDS=60)
     def test_add_cache_control(self):
@@ -86,8 +95,16 @@ class TrailingSlashMiddlewareTestCase(TestCase):
         response = self.client.get("/en-US/ohnoez")
         self.assertEqual(response.status_code, 404)
 
+    def test_no_trailing_slash_without_locale_in_path(self):
+        response = self.client.get("/ohnoez")
+        self.assertEqual(response.status_code, 404)
+
     def test_404_trailing_slash(self):
         response = self.client.get("/en-US/ohnoez/")
+        self.assertEqual(response.status_code, 404)
+
+    def test_404_trailing_slash_without_locale_in_path(self):
+        response = self.client.get("/ohnoez/")
         self.assertEqual(response.status_code, 404)
 
     def test_remove_trailing_slash(self):
@@ -95,11 +112,19 @@ class TrailingSlashMiddlewareTestCase(TestCase):
         self.assertEqual(response.status_code, 301)
         assert response.headers["Location"].endswith("/en-US/home?xxx=%C3%83")
 
+    def test_remove_trailing_slash_without_locale_in_path(self):
+        response = self.client.get("/home/?xxx=%C3%83")
+        self.assertEqual(response.status_code, 301)
+        assert response.headers["Location"].endswith("/home?xxx=%C3%83")
+
 
 class PlusToSpaceTestCase(TestCase):
+    def g_response(*args, **kwargs):
+        return HttpResponse()
 
+    get_response = g_response()
     rf = RequestFactory()
-    ptsm = PlusToSpaceMiddleware()
+    ptsm = PlusToSpaceMiddleware(get_response)
 
     def test_plus_to_space(self):
         """Pluses should be converted to %20."""
@@ -129,15 +154,43 @@ class PlusToSpaceTestCase(TestCase):
 
     def test_with_locale(self):
         """URLs with a locale should keep it."""
-        request = self.rf.get("/pa+th", {"a": "b"})
-        request.LANGUAGE_CODE = "ru"
+        request = self.rf.get("/ru/pa+th", {"a": "b"})
         response = self.ptsm.process_request(request)
         self.assertEqual("/ru/pa%20th?a=b", response.headers["location"])
 
-    def test_smart_query_string(self):
+    def test_with_non_unicode_query_string(self):
         """The request QUERY_STRING might not be unicode."""
-        request = self.rf.get("/pa+th")
-        request.LANGUAGE_CODE = "ja"
+        request = self.rf.get("/ja/pa+th")
         request.META["QUERY_STRING"] = "s=%E3%82%A2"
         response = self.ptsm.process_request(request)
         self.assertEqual("/ja/pa%20th?s=%E3%82%A2", response.headers["location"])
+
+
+class SetRemoteAddrFromForwardedForMiddlewareTestCase(TestCase):
+    def test_when_no_trusted_proxies(self):
+        with self.settings(TRUSTED_PROXY_COUNT=0), self.assertRaises(MiddlewareNotUsed):
+            SetRemoteAddrFromForwardedFor(lambda *args, **kwargs: HttpResponse())
+
+    def test_when_one_or_more_trusted_proxies(self):
+        rf = RequestFactory()
+        mw = SetRemoteAddrFromForwardedFor(lambda *args, **kwargs: HttpResponse())
+        for proxy_count, forwarded_for, expected in [
+            (1, " ", "127.0.0.1"),
+            (1, "1.1.1.1", "127.0.0.1"),
+            (1, "684D:1:2:3:4:55:6:7", "127.0.0.1"),
+            (1, "1.1.1.1, 2.2.2.2", "1.1.1.1"),
+            (1, "684D:1:2:3:4:55:6:7, 2001:DB8::FF00:42:8329", "684d:1:2:3:4:55:6:7"),
+            (1, "3.3.3.3, 2001:DB8::FF00:42:8329, 684D:1:2:3:4:55:6:7", "2001:db8::ff00:42:8329"),
+            (1, " yädâ , yädâ.ÿådá.😜.🤪 , yädâ", "127.0.0.1"),
+            (1, " yädâ , yädâ, ,1.1.1.1, 2.2.2.2", "1.1.1.1"),
+            (2, "3.3.3.3", "127.0.0.1"),
+            (2, "2.2.2.2,  3.3.3.3,  4.4.4.4", "2.2.2.2"),
+            (2, "3.3.3.3, 4.4.4.4,5.5.5.5", "3.3.3.3"),
+            (2, "999.255.255.1, 4.4.4.4,5.5.5.5", "127.0.0.1"),
+        ]:
+            with self.settings(TRUSTED_PROXY_COUNT=proxy_count), self.subTest(
+                f"{proxy_count} with {forwarded_for}"
+            ):
+                request = rf.get("/", HTTP_X_FORWARDED_FOR=forwarded_for)
+                mw(request)
+                self.assertEqual(request.META["REMOTE_ADDR"], expected)

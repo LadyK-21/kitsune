@@ -3,11 +3,12 @@ import time
 from pyquery import PyQuery as pq
 
 from kitsune.kbforums.feeds import PostsFeed, ThreadsFeed
-from kitsune.kbforums.tests import KBForumTestCase, ThreadFactory, get
-from kitsune.wiki.tests import DocumentFactory
+from kitsune.kbforums.tests import ThreadFactory, get
+from kitsune.sumo.tests import TestCase
+from kitsune.wiki.tests import ApprovedRevisionFactory, DocumentFactory
 
 
-class FeedSortingTestCase(KBForumTestCase):
+class FeedSortingTestCase(TestCase):
     def test_threads_sort(self):
         """Ensure that threads are being sorted properly by date/time."""
         d = DocumentFactory()
@@ -30,7 +31,7 @@ class FeedSortingTestCase(KBForumTestCase):
 
     def test_multi_feed_titling(self):
         """Ensure that titles are being applied properly to feeds."""
-        d = DocumentFactory()
+        d = ApprovedRevisionFactory().document
         response = get(self.client, "wiki.discuss.threads", args=[d.slug])
         doc = pq(response.content)
         given_ = doc('link[type="application/atom+xml"]')[0].attrib["title"]

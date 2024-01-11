@@ -6,11 +6,13 @@ from datetime import date, datetime, timedelta
 
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth.views import redirect_to_login
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.sites.models import Site
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import EmptyPage, PageNotAnInteger
 from django.db.models import Q
+from django.db.models.functions import Now
 from django.http import (
     Http404,
     HttpResponse,
@@ -20,14 +22,12 @@ from django.http import (
 )
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.loader import render_to_string
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy as _lazy
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from django_user_agents.utils import get_user_agent
 from sentry_sdk import capture_exception
 from taggit.models import Tag
-from tidings.events import ActivationRequestFailed
-from tidings.models import Watch
 from zenpy.lib.exception import APIException
 
 from kitsune.access.decorators import login_required, permission_required
@@ -46,11 +46,20 @@ from kitsune.questions.forms import (
 )
 from kitsune.questions.models import Answer, AnswerVote, Question, QuestionLocale, QuestionVote
 from kitsune.questions.utils import get_featured_articles, get_mobile_product_from_ua
-from kitsune.sumo.decorators import ratelimit, ssl_required
+from kitsune.sumo.decorators import ratelimit
+from kitsune.sumo.i18n import split_into_language_and_path
 from kitsune.sumo.templatetags.jinja_helpers import urlparams
-from kitsune.sumo.urlresolvers import reverse, split_path
-from kitsune.sumo.utils import build_paged_url, is_ratelimited, paginate, simple_paginate
+from kitsune.sumo.urlresolvers import reverse
+from kitsune.sumo.utils import (
+    build_paged_url,
+    get_next_url,
+    is_ratelimited,
+    paginate,
+    simple_paginate,
+)
 from kitsune.tags.utils import add_existing_tag
+from kitsune.tidings.events import ActivationRequestFailed
+from kitsune.tidings.models import Watch
 from kitsune.upload.models import ImageAttachment
 from kitsune.users.models import Setting
 from kitsune.wiki.facets import topics_for
@@ -162,37 +171,39 @@ def question_list(request, product_slug):
     if filter_ not in FILTER_GROUPS[show]:
         filter_ = None
 
-    if filter_ == "new":
-        question_qs = question_qs.new()
-    elif filter_ == "unhelpful-answers":
-        question_qs = question_qs.unhelpful_answers()
-    elif filter_ == "needsinfo":
-        question_qs = question_qs.needs_info()
-    elif filter_ == "solution-provided":
-        question_qs = question_qs.solution_provided()
-    elif filter_ == "solved":
-        question_qs = question_qs.solved()
-    elif filter_ == "locked":
-        question_qs = question_qs.locked()
-    elif filter_ == "recently-unanswered":
-        question_qs = question_qs.recently_unanswered()
-    else:
-        if show == "needs-attention":
-            question_qs = question_qs.needs_attention()
-        if show == "responded":
-            question_qs = question_qs.responded()
-        if show == "done":
-            question_qs = question_qs.done()
+    match filter_:
+        case "new":
+            question_qs = question_qs.new()
+        case "unhelpful-answers":
+            question_qs = question_qs.unhelpful_answers()
+        case "needsinfo":
+            question_qs = question_qs.needs_info()
+        case "solution-provided":
+            question_qs = question_qs.solution_provided()
+        case "solved":
+            question_qs = question_qs.solved()
+        case "locked":
+            question_qs = question_qs.locked()
+        case "recently-unanswered":
+            question_qs = question_qs.recently_unanswered()
+        case _:
+            if show == "needs-attention":
+                question_qs = question_qs.needs_attention()
+            if show == "responded":
+                question_qs = question_qs.responded()
+            if show == "done":
+                question_qs = question_qs.done()
 
     question_qs = question_qs.select_related("creator", "last_answer", "last_answer__creator")
-    # Exclude questions over 90 days old without an answer or
-    # older than 2 years or
-    # created by deactivated users
+    # Exclude questions over 90 days old without an answer or older than 2 years or created
+    # by deactivated users. Use "__range" to ensure the database index is used in Postgres.
     today = date.today()
     question_qs = (
-        question_qs.exclude(created__lt=today - timedelta(days=90), num_answers=0)
+        question_qs.exclude(
+            created__range=(datetime.min, today - timedelta(days=90)), num_answers=0
+        )
         .filter(creator__is_active=True)
-        .filter(updated__gt=today - timedelta(days=365 * 2))
+        .filter(updated__range=(today - timedelta(days=365 * 2), Now()))
     )
 
     question_qs = question_qs.prefetch_related("topic", "product")
@@ -460,8 +471,7 @@ def edit_details(request, question_id):
     return redirect(reverse("questions.details", kwargs={"question_id": question_id}))
 
 
-@ssl_required
-def aaq(request, product_key=None, category_key=None, step=1):
+def aaq(request, product_key=None, category_key=None, step=1, is_loginless=False):
     """Ask a new question."""
 
     template = "questions/new_question.html"
@@ -470,7 +480,6 @@ def aaq(request, product_key=None, category_key=None, step=1):
     # render step 2 if they are
     product_key = product_key or request.GET.get("product")
     if product_key is None:
-
         change_product = False
         if request.GET.get("q") == "change_product":
             change_product = True
@@ -497,11 +506,11 @@ def aaq(request, product_key=None, category_key=None, step=1):
         except Product.DoesNotExist:
             raise Http404
         has_public_forum = product.questions_enabled(locale=request.LANGUAGE_CODE)
-        has_subscriptions = product.has_subscriptions
+        has_ticketing_support = product.has_ticketing_support
         request.session["aaq_context"] = {
             "key": product_key,
             "has_public_forum": has_public_forum,
-            "has_subscriptions": has_subscriptions,
+            "has_ticketing_support": has_ticketing_support,
         }
 
     context = {
@@ -509,20 +518,27 @@ def aaq(request, product_key=None, category_key=None, step=1):
         "current_product": product_config,
         "current_step": step,
         "host": Site.objects.get_current().domain,
+        "is_loginless": is_loginless,
     }
 
     if step > 1:
-        context["has_subscriptions"] = has_subscriptions
+        context["has_ticketing_support"] = has_ticketing_support
 
     if step == 2:
         context["featured"] = get_featured_articles(product, locale=request.LANGUAGE_CODE)
         context["topics"] = topics_for(product, parent=None)
 
     elif step == 3:
+        context["cancel_url"] = get_next_url(request) or (
+            reverse("products.product", args=[product.slug])
+            if is_loginless
+            else reverse("questions.aaq_step2", args=[product_key])
+        )
+
         # Check if the selected product has a forum in the user's locale
         if not has_public_forum:
-            locale, path = split_path(request.path)
-            path = "/" + settings.WIKI_DEFAULT_LANGUAGE + "/" + path
+            locale, path = split_into_language_and_path(request.path_info)
+            path = f"/{settings.WIKI_DEFAULT_LANGUAGE}{path}"
 
             old_lang = settings.LANGUAGES_DICT[request.LANGUAGE_CODE.lower()]
             new_lang = settings.LANGUAGES_DICT[settings.WIKI_DEFAULT_LANGUAGE.lower()]
@@ -534,22 +550,25 @@ def aaq(request, product_key=None, category_key=None, step=1):
 
             return HttpResponseRedirect(path)
 
-        if has_subscriptions:
-            zendesk_form = ZendeskForm(data=request.POST or None, product=product)
+        if has_ticketing_support:
+            zendesk_form = ZendeskForm(
+                data=request.POST or None,
+                product=product,
+                user=request.user,
+            )
             context["form"] = zendesk_form
 
-            if zendesk_form.is_valid():
+            if zendesk_form.is_valid() and not is_ratelimited(request, "loginless", "3/d"):
                 try:
-                    zendesk_form.send(request.user)
-
+                    zendesk_form.send(request.user, product_config)
+                    email = zendesk_form.cleaned_data["email"]
                     messages.add_message(
                         request,
                         messages.SUCCESS,
                         _(
-                            "Done! Your message was sent to Mozilla Support, "
-                            "thank you for reaching out. "
-                            "We'll contact you via email as soon as possible."
-                        ),
+                            "Done! Thank you for reaching out Mozilla Support."
+                            " We've sent a confirmation email to {email}"
+                        ).format(email=email),
                     )
 
                     url = reverse("products.product", args=[product.slug])
@@ -561,6 +580,13 @@ def aaq(request, product_key=None, category_key=None, step=1):
                     )
                     capture_exception(err)
 
+            if getattr(request, "limited", False):
+                messages.add_message(
+                    request,
+                    messages.ERROR,
+                    _("You've exceeded the number of submissions for today."),
+                )
+
             return render(request, template, context)
 
         form = NewQuestionForm(
@@ -571,7 +597,6 @@ def aaq(request, product_key=None, category_key=None, step=1):
         context["form"] = form
 
         if form.is_valid() and not is_ratelimited(request, "aaq-day", "5/d"):
-
             question = form.save(
                 user=request.user,
                 locale=request.LANGUAGE_CODE,
@@ -614,18 +639,32 @@ def aaq(request, product_key=None, category_key=None, step=1):
     return render(request, template, context)
 
 
-@ssl_required
 def aaq_step2(request, product_key):
     """Step 2: The product is selected."""
     return aaq(request, product_key=product_key, step=2)
 
 
-@login_required
-@ssl_required
 def aaq_step3(request, product_key, category_key=None):
     """Step 3: Show full question form."""
+
+    # Since removing the @login_required decorator for MA form
+    # need to catch unauthenticated, non-MA users here """
+    referer = request.META.get("HTTP_REFERER", "")
+    is_loginless = (product_key in settings.LOGIN_EXCEPTIONS) and any(
+        uri in referer
+        for uri in settings.MOZILLA_ACCOUNT_ARTICLES
+        + [
+            path.removeprefix(f"/{request.LANGUAGE_CODE}")
+            for path in (reverse("users.auth"), reverse("questions.aaq_step3", args=[product_key]))
+        ]
+    )
+
+    if not (is_loginless or request.user.is_authenticated):
+        return redirect_to_login(next=request.path, login_url=reverse("users.login"))
+
     return aaq(
         request,
+        is_loginless=is_loginless,
         product_key=product_key,
         category_key=category_key,
         step=3,
@@ -741,6 +780,7 @@ def reply(request, question_id):
     )
 
 
+@require_POST
 def solve(request, question_id, answer_id):
     """Accept an answer as the solution to the question."""
 
@@ -804,7 +844,7 @@ def unsolve(request, question_id, answer_id):
 
 
 @require_POST
-@ratelimit("question-vote", "10/d")
+@ratelimit("question-vote", "1/h")
 def question_vote(request, question_id):
     """I have this problem too."""
     question = get_object_or_404(Question, pk=question_id, is_spam=False)
@@ -834,7 +874,7 @@ def question_vote(request, question_id):
             if ua:
                 vote.add_metadata("ua", ua)
 
-        if request.is_ajax():
+        if request.headers.get("x-requested-with") == "XMLHttpRequest":
             tmpl = "questions/includes/question_vote_thanks.html"
             form = _init_watch_form(request)
             html = render_to_string(
@@ -852,7 +892,7 @@ def question_vote(request, question_id):
 
 
 @require_POST
-@ratelimit("answer-vote", "10/d")
+@ratelimit("answer-vote", "1/h")
 def answer_vote(request, question_id, answer_id):
     """Vote for Helpful/Not Helpful answers"""
     answer = get_object_or_404(
@@ -867,7 +907,7 @@ def answer_vote(request, question_id, answer_id):
         raise PermissionDenied
 
     if request.limited:
-        if request.is_ajax():
+        if request.headers.get("x-requested-with") == "XMLHttpRequest":
             return HttpResponse(json.dumps({"ignored": True}))
         else:
             return HttpResponseRedirect(answer.get_absolute_url())
@@ -901,7 +941,7 @@ def answer_vote(request, question_id, answer_id):
     else:
         message = _("You already voted on this reply.")
 
-    if request.is_ajax():
+    if request.headers.get("x-requested-with") == "XMLHttpRequest":
         return HttpResponse(json.dumps({"message": message}))
 
     return HttpResponseRedirect(answer.get_absolute_url())
@@ -1161,10 +1201,26 @@ def edit_answer(request, question_id, answer_id):
 
 
 @require_POST
+@ratelimit("watch-question", "10/d")
 def watch_question(request, question_id):
     """Start watching a question for replies or solution."""
 
+    if request.limited:
+        msg = _(
+            "We were unable to register your request. You've exceeded the "
+            "limit for the number of questions allowed to watch in a day. "
+            "Please try again tomorrow."
+        )
+        if request.headers.get("x-requested-with") == "XMLHttpRequest":
+            return HttpResponse(json.dumps({"message": msg, "ignored": True}))
+
+        messages.add_message(request, messages.ERROR, msg)
+        return HttpResponseRedirect(
+            reverse("questions.details", kwargs={"question_id": question_id})
+        )
+
     question = get_object_or_404(Question, pk=question_id, is_spam=False)
+
     form = WatchQuestionForm(request.user, request.POST)
 
     # Process the form
@@ -1182,7 +1238,7 @@ def watch_question(request, question_id):
             msg = _("Could not send a message to that email address.")
 
     # Respond to ajax request
-    if request.is_ajax():
+    if request.headers.get("x-requested-with") == "XMLHttpRequest":
         if form.is_valid():
             msg = msg or (
                 _("You will be notified of updates by email.")

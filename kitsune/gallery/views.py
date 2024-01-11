@@ -6,7 +6,7 @@ from django.conf import settings
 from django.db.models import Q
 from django.http import HttpResponse, HttpResponseRedirect, HttpResponseBadRequest, Http404
 from django.shortcuts import get_object_or_404, render
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_POST
 
@@ -68,8 +68,8 @@ def upload(request, media_type="image"):
         image_form = _init_media_form(ImageForm, request, drafts["image"][0])
         if image_form.is_valid():
             img = image_form.save(is_draft=None)
-            generate_thumbnail.delay(img, "file", "thumbnail")
-            compress_image.delay(img, "file")
+            generate_thumbnail.delay("gallery.Image", img.id, "file", "thumbnail")
+            compress_image.delay("gallery.Image", img.id, "file")
             # Rebuild KB
             schedule_rebuild_kb()
             return HttpResponseRedirect(img.get_absolute_url())
@@ -90,12 +90,12 @@ def cancel_draft(request, media_type="image"):
     else:
         msg = _("Unrecognized request or nothing to cancel.")
         content_type = None
-        if request.is_ajax():
+        if request.headers.get("x-requested-with") == "XMLHttpRequest":
             msg = json.dumps({"status": "error", "message": msg})
             content_type = "application/json"
         return HttpResponseBadRequest(msg, content_type=content_type)
 
-    if request.is_ajax():
+    if request.headers.get("x-requested-with") == "XMLHttpRequest":
         return HttpResponse(json.dumps({"status": "success"}), content_type="application/json")
 
     return HttpResponseRedirect(reverse("gallery.gallery", args=[media_type]))
@@ -188,7 +188,7 @@ def edit_media(request, media_id, media_type="image"):
         raise Http404
 
     if request.method == "POST" and media_form.is_valid():
-        media = media_form.save(update_user=request.user, is_draft=False)
+        media = media_form.save(update_user=request.user, is_draft=None)
         return HttpResponseRedirect(reverse("gallery.media", args=[media_type, media_id]))
 
     return render(

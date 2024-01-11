@@ -1,0 +1,31 @@
+@use "@mozilla-protocol/core/protocol/css/includes/lib" as p;
+
+#sign-in-step-root[mode="sign-in"] .for-sign-up,
+#sign-in-step-root[mode="sign-up"] .for-sign-in {
+  display: none;
+}
+
+label,
+input[name="email"] {
+  font-size: 0.8125rem;
+}
+
+label {
+  font-weight: normal;
+}
+
+input[name="email"] {
+  width: 325px;
+  margin-block-end: 16px;
+}
+
+button.for-sign-in,
+button.for-sign-up {
+  display: block;
+  margin-block-end: 8px;
+}
+
+.form-footer {
+  margin-block: 16px 60px;
+  font-size: 0.8125rem;
+}

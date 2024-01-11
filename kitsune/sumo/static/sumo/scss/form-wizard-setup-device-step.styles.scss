@@ -1,0 +1,56 @@
+h3,
+ul,
+li {
+  margin-block-end: 16px;
+}
+
+ul {
+  list-style-type: none;
+}
+
+label[for="email"] {
+  color: var(--color-marketing-gray-07);
+}
+
+#email {
+  margin-block-end: 0;
+  margin-inline-end: 8px;
+  max-width: 300px;
+  flex: 1;
+}
+
+#email-reminder-form,
+#email-reminder-form > .tooltip-container {
+  margin-block-end: 16px;
+}
+
+#email-consent-message {
+  font-size: 0.75rem;
+}
+
+#email-error > .error {
+  display: none;
+}
+
+#email-error[error-type="invalid-email"] > .invalid-email,
+#email-error[error-type="other"] > .other {
+  display: inline;
+}
+
+#submit {
+  white-space: nowrap;
+}
+
+#submit > .success {
+  margin-inline-end: 2px;
+}
+
+#submit:not([success]) > .success,
+#submit[success] > .not-success {
+  display: none;
+}
+
+#submit[success] {
+  background-color: var(--color-green-07);
+  opacity: 1.0;
+}

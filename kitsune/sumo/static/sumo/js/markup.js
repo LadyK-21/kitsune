@@ -141,7 +141,7 @@ Marky.SimpleButton.prototype = {
   node: function() {
     var me = this,
       $btn = this.render();
-    $btn.click(function(e) {
+    $btn.on("click", function(e) {
       me.handleClick(e);
     });
     return $btn[0];
@@ -288,7 +288,7 @@ Marky.LinkButton.prototype = $.extend({}, Marky.SimpleButton.prototype, {
   node: function() {
     var me = this,
       $btn = this.render();
-    $btn.click(function(e) {
+    $btn.on("click", function(e) {
       me.openModal(e);
     });
     return $btn[0];
@@ -324,8 +324,8 @@ Marky.LinkButton.prototype = $.extend({}, Marky.SimpleButton.prototype, {
       selectedText = me.getSelectedText(),
       kbox;
 
-    $html.find('li input[type="text"]').focus(function() {
-      $(this).closest('li').find('input[type="radio"]').click();
+    $html.find('li input[type="text"]').on('focus', function() {
+      $(this).closest('li').find('input[type="radio"]').trigger("click");
     });
 
     // Perform a query for the sections of an article if
@@ -432,7 +432,7 @@ Marky.LinkButton.prototype = $.extend({}, Marky.SimpleButton.prototype, {
       }
     });
 
-    $html.find('button').text(gettext('Insert Link')).click(function(e) {
+    $html.find('button').text(gettext('Insert Link')).on("click", function(e) {
       // Generate the wiki markup based on what the user has selected
       // (interval vs external links) and entered into the textboxes,
       // if anything.
@@ -493,7 +493,7 @@ Marky.LinkButton.prototype = $.extend({}, Marky.SimpleButton.prototype, {
     if (selectedText) {
       // If there user has selected text, lets default to it being
       // the Article Title.
-      $html.find('input[name="internal"]').val(selectedText).focus();
+      $html.find('input[name="internal"]').val(selectedText).trigger("focus");
     }
 
     kbox = new KBox($html, {
@@ -530,7 +530,7 @@ Marky.MediaButton.prototype = $.extend({}, Marky.SimpleButton.prototype, {
   node: function() {
     var me = this,
       $btn = this.render();
-    $btn.click(function(e) {
+    $btn.on("click", function(e) {
       me.openModal(e);
     });
     return $btn[0];
@@ -546,25 +546,31 @@ Marky.MediaButton.prototype = $.extend({}, Marky.SimpleButton.prototype, {
       mediaSearchUrl = $editor.data('media-search-url'),
       galleryUrl = $editor.data('media-gallery-url'),
     // TODO: look at using a js template solution (jquery-tmpl?)
-      $html = $(
-          '<section class="marky">' +
-          '<div class="filter cf">' +
-          '<form class="simple-search-form" id="gallery-modal-search"><input type="text" name="q" class="searchbox"' +
-          'placeholder="' + gettext('Search Gallery') + '" />' +
-          '<button type="submit" class="submit-button search-button" title="' + gettext('Search Gallery') + '">' +
-          gettext('Search Gallery') + '</button></form>' +
+    $html = $(
+      '<section class="marky">' +
+        '<div class="filter cf">' +
+            '<form class="simple-search-form" id="gallery-modal-search"><input type="text" name="q" class="searchbox"' +
+            'placeholder="' + gettext('Search Gallery') + '" />' +
+            '<button type="submit" class="submit-button search-button" title="' + gettext('Search Gallery') + '">' +
+            gettext('Search Gallery') + '</button>' + 
+          '</form>' +
           '<div class="type">' +
-          '<span>' + gettext('Show:') + '</span>' +
-          '<ol><li data-type="image" class="selected">' + gettext('Images') + '</li>' +
-          '<li data-type="video">' + gettext('Videos') + '</li></ol></div>' +
-          '<div class="locale-filter">' + gettext('Show media for:') + ' <select /></div></div>' +
-          '<div class="placeholder" /><div class="submit sumo-button-wrap reverse-on-desktop align-end">' +
-          '<button class="sumo-button primary-button">' + gettext('Insert Media') + '</button>' +
-          '<a href="' + galleryUrl + '#upload" class="upload sumo-button secondary-button" target="_blank">' +
-          gettext('Upload Media') + '</a>' +
-          '<a href="#cancel" class="kbox-cancel sumo-button push-left">' + gettext('Cancel') + '</a></div>' +
-          '</section>'
-      ),
+            '<span>' + gettext('Show:') + '</span>' +
+            '<ol><li data-type="image" class="selected">' + gettext('Images') + '</li>' +
+            '<li data-type="video">' + gettext('Videos') + '</li></ol>' + 
+          '</div>' +
+          '<div class="locale-filter">' + gettext('Show media for:') + ' <select></select>' + 
+          '</div>' + 
+        '</div>' +
+        '<div class="placeholder">' + '</div>' +
+          '<div class="submit sumo-button-wrap reverse-on-desktop align-end">' +
+            '<button class="sumo-button primary-button">' + gettext('Insert Media') + '</button>' +
+            '<a href="' + galleryUrl + '#upload" class="upload sumo-button secondary-button" target="_blank">' +
+            gettext('Upload Media') + '</a>' +
+            '<a href="#cancel" class="kbox-cancel sumo-button push-left">' + gettext('Cancel') + '</a>' + 
+          '</div>' +            
+      '</section>'
+  ),
       selectedText = me.getSelectedText(),
       mediaType = $html.find('div.type li.selected').data('type'),
       mediaQ = '',
@@ -573,7 +579,7 @@ Marky.MediaButton.prototype = $.extend({}, Marky.SimpleButton.prototype, {
       kbox;
 
     // Handle Images/Videos filter
-    $html.find('div.type li').click(function(e) {
+    $html.find('div.type li').on("click", function(e) {
       var $this = $(this);
       if (!$this.is('.selected')) {
         $html.find('div.type li.selected').removeClass('selected');
@@ -596,7 +602,7 @@ Marky.MediaButton.prototype = $.extend({}, Marky.SimpleButton.prototype, {
     });
 
     // Handle Search
-    $html.find('form#gallery-modal-search').submit(function(e) {
+    $html.find('form#gallery-modal-search').on('submit', function(e) {
       mediaQ = $html.find('input[name="q"]').val();
       mediaPage = 1;
       updateResults();
@@ -605,13 +611,13 @@ Marky.MediaButton.prototype = $.extend({}, Marky.SimpleButton.prototype, {
     });
 
     // Handle Upload link
-    $html.find('a.upload').click(function(e) {
+    $html.find('a.upload').on("click", function(e) {
       // Close the modal. The link itself will open gallery in new tab/window.
       kbox.close();
     });
 
     // Handle pagination
-    $html.delegate('ol.pagination a', 'click', function(e) {
+    $html.on('click', 'ol.pagination a', function(e) {
       mediaPage = parseInt($(this).attr('href').split('&page=')[1], 10);
       updateResults();
       e.preventDefault();
@@ -619,7 +625,7 @@ Marky.MediaButton.prototype = $.extend({}, Marky.SimpleButton.prototype, {
     });
 
     // Handle 'Insert Media' button click
-    $html.find('div.submit button').click(function(e) {
+    $html.find('div.submit button').on("click", function(e) {
       // Generate the wiki markup based on what the user has selected.
       me.reset();
 
@@ -650,9 +656,9 @@ Marky.MediaButton.prototype = $.extend({}, Marky.SimpleButton.prototype, {
         dataType: 'html',
         success: function(html) {
           $html.find('div.placeholder').html(html);
-          $html.find('#media-list > li').click(function(e) {
-            var $this = $(this),
-              $mediaList = $(this).parent();
+          $html.find('#media-list > li').on("click", function(e) {
+            let $this = $(this);
+            let $mediaList = $(this).parent();
             $mediaList.find('li.selected').removeClass('selected');
             $this.addClass('selected');
             e.preventDefault();
@@ -704,7 +710,7 @@ Marky.CannedResponsesButton.prototype = $.extend({}, Marky.SimpleButton.prototyp
   node: function() {
     var me = this,
       $btn = this.render();
-    $btn.click(function(e) {
+    $btn.on("click", function(e) {
       me.openModal(e);
     });
 
@@ -918,7 +924,7 @@ Marky.CannedResponsesButton.prototype = $.extend({}, Marky.SimpleButton.prototyp
               response_target = response_target.split('#')[0];
 
               if (canUseResponse) {
-                $response.click(function() {
+                $response.on("click", function() {
                   $('.response-list li').not($(this)).removeClass('selected');
                   $(this).addClass('selected');
                   getContent(response_target);
@@ -968,12 +974,12 @@ Marky.CannedResponsesButton.prototype = $.extend({}, Marky.SimpleButton.prototyp
 
     kbox.open();
 
-    $html.find('#insert-response').click(function() {
+    $html.find('#insert-response').on("click", function() {
       insertResponse();
       kbox.close();
     });
 
-    $html.find('#filter-responses-field').keyup(function() {
+    $html.find('#filter-responses-field').on('keyup', function() {
       var term = $(this).val();
       searchResponses(term);
     });
@@ -982,7 +988,7 @@ Marky.CannedResponsesButton.prototype = $.extend({}, Marky.SimpleButton.prototyp
     var $contentArea = $html.find('.response-preview');
     var $renderedPreview = $html.find('.response-preview-rendered');
 
-    $html.find('.toggle-view').click(function() {
+    $html.find('.toggle-view').on("click", function() {
       if ($contentArea.is(':visible')) {
         updatePreview();
         $previewLabel.text(gettext('Response preview'));

@@ -3,9 +3,10 @@ from itertools import count
 from xml.sax.saxutils import quoteattr
 
 import bleach
+from bleach.css_sanitizer import CSSSanitizer
 from django.conf import settings
-from django.utils.translation import gettext_lazy as _lazy
-from django.utils.translation import ugettext as _
+from django.utils import translation
+from django.utils.translation import gettext as _, gettext_lazy as _lazy
 from html5lib import HTMLParser
 from html5lib.filters.alphabeticalattributes import Filter as sortAttributes
 from html5lib.serializer import HTMLSerializer
@@ -17,7 +18,6 @@ from wikimarkup.parser import ALLOWED_TAGS
 from kitsune.gallery.models import Image
 from kitsune.sumo import parser as sumo_parser
 from kitsune.sumo.parser import ALLOWED_ATTRIBUTES, ALLOWED_STYLES, get_object_fallback
-from kitsune.sumo.utils import uselocale
 from kitsune.wiki.models import Document
 
 # block elements wikimarkup knows about (and thus preserves)
@@ -55,7 +55,7 @@ def wiki_to_html(wiki_markup, locale=settings.WIKI_DEFAULT_LANGUAGE, doc_id=None
     if parser_cls is None:
         parser_cls = WikiParser
 
-    with uselocale(locale):
+    with translation.override(locale):
         content = parser_cls(doc_id=doc_id).parse(
             wiki_markup,
             show_toc=False,
@@ -214,7 +214,9 @@ class ForParser(object):
             html,
             tags=kwargs.get("tags") or (ALLOWED_TAGS + ["for"]),
             attributes=kwargs.get("attributes") or ALLOWED_ATTRIBUTES,
-            styles=kwargs.get("styles") or ALLOWED_STYLES,
+            css_sanitizer=CSSSanitizer(
+                allowed_css_properties=kwargs.get("styles") or ALLOWED_STYLES
+            ),
             strip_comments=True,
         )
 
@@ -409,7 +411,9 @@ class WikiParser(sumo_parser.WikiParser):
         text = parse_simple_syntax(text)
 
         # Run the formatter:
-        html = super(WikiParser, self).parse(text, youtube_embeds=False, **kwargs)
+        html = super(WikiParser, self).parse(
+            text, youtube_embeds=False, ui_component_embeds=False, **kwargs
+        )
 
         # Put the fors back in (as XML-ish <for> tags this time):
         html = ForParser.unstrip_fors(html, data)
@@ -423,6 +427,7 @@ class WikiParser(sumo_parser.WikiParser):
         html = for_parser.serialize(**kwargs)
 
         html = self.add_youtube_embeds(html)
+        html = self.add_ui_component_embeds(html)
 
         return html
 
@@ -486,7 +491,7 @@ class WhatLinksHereParser(WikiParser):
 
     def __init__(self, doc_id, **kwargs):
         self.current_doc = Document.objects.get(pk=doc_id)
-        return super(WhatLinksHereParser, self).__init__(doc_id=doc_id, **kwargs)
+        super(WhatLinksHereParser, self).__init__(doc_id=doc_id, **kwargs)
 
     def _hook_internal_link(self, parser, space, name):
         """Records links between documents, and then calls super()."""

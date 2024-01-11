@@ -1,0 +1,30 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+.switching-devices.topic-list:not(.switching-devices.topic-list.is-active) {
+    display: none;
+}
+
+nav.switching-devices.tabs {
+    button.tabs--link:focus:not(:focus-visible) {
+        box-shadow: none;
+    }
+
+    button.tabs--link:hover {
+        cursor: pointer;
+    }
+}
+
+dialog.reminder-dialog {
+    border: 0;
+    border-radius: 16px;
+    box-shadow: 0px 2px 6px rgba(58, 57, 68, 0.2);
+    padding: 0;
+}
+
+dialog.reminder-dialog .mzp-c-menu-list-list {
+    top: unset;
+    left: unset;
+    margin-block-start: 8px;
+}

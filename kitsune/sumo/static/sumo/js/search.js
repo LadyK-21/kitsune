@@ -1,11 +1,11 @@
 import "jquery-ui/ui/widgets/tabs";
 
-$(document).ready(function() {
+$(function() {
   // initiate tabs
   var tabs = $('#search-tabs').tabs(),
     cache_search_date = $('.showhide-input');
 
-  $('#tab-wrapper form').submit(function() {
+  $('#tab-wrapper form').on("submit", function() {
     $('input.auto-fill').each(function() {
       if ($(this).val() === $(this).attr('placeholder')) {
         $(this).val('');
@@ -13,13 +13,13 @@ $(document).ready(function() {
     });
   });
 
-  $('select', cache_search_date).change(function () {
+  $('select', cache_search_date).trigger(function () {
     if ($(this).val() === 0) {
       $('input', $(this).parent()).hide();
     } else {
       $('input', $(this).parent()).show();
     }
-  }).change();
+  }).trigger();
 
   switch (parseInt($('#where').text(), 10)) {
     case 4:

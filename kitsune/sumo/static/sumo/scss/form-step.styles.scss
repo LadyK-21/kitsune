@@ -1,0 +1,88 @@
+@use "@mozilla-protocol/core/protocol/css/includes/lib" as p;
+
+// Base elements - general HTML elements
+@import "protocol/css/base/elements/reset";
+@import "protocol/css/base/elements/common";
+@import "protocol/css/base/elements/forms";
+
+// Components from protocol-extra.scss
+@import "protocol/css/components/button";
+
+@import "./base/typography";
+
+:root,
+:host {
+  --color-text-form-step: var(--color-dark-gray-10);
+
+  font-size: 0.875rem;
+  line-height: 1.14;
+  color: var(--color-text-form-step);
+  min-height: 292px;
+}
+
+h3 {
+  font-size: 1.5rem;
+  line-height: 1.5;
+  margin-block: 12px 16px;
+}
+
+button.mzp-c-button {
+  font-size: 0.8125rem;
+}
+
+.button-secondary,
+.button-secondary:hover,
+.button-secondary:focus,
+.button-secondary:active {
+  background-color: var(--color-light-gray-03);
+  border-color: var(--color-light-gray-03);
+  color: var(--color-text-form-step);
+}
+
+.tooltip-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.tooltip {
+  border-radius: 4px;
+  padding: 8px;
+  position: absolute;
+  background-color: p.$color-red-60;
+  color: var(--color-white);
+  width: max-content;
+  visibility: hidden;
+  top: -34px;
+  z-index: -1;
+}
+
+.tooltip::before {
+  background-color: p.$color-red-60;
+  content: "";
+  height: 12px;
+  position: absolute;
+  text-indent: -999px;
+  transform: rotate(45deg);
+  white-space: nowrap;
+  width: 12px;
+  bottom: -6px;
+  left: 12px;
+}
+
+.visible {
+  visibility: visible;
+}
+
+.tooltip.visible {
+  z-index: 0;
+}
+
+.tooltip.visible + input:invalid,
+input:not(:focus):not(:placeholder-shown):invalid {
+  border: 2px solid p.$color-red-60;
+}
+
+.tooltip.visible + input:focus:invalid {
+  box-shadow: 0 0 0 2px rgba(226, 40, 80, 0.5);
+}

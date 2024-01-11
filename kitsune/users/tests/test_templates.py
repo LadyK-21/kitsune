@@ -1,19 +1,19 @@
 from django.conf import settings
 from pyquery import PyQuery as pq
-from tidings.models import Watch
 
 from kitsune.flagit.models import FlaggedObject
 from kitsune.kbadge.tests import AwardFactory, BadgeFactory
 from kitsune.questions.events import QuestionReplyEvent
 from kitsune.questions.tests import QuestionFactory
-from kitsune.sumo.tests import get
+from kitsune.sumo.tests import TestCase, get
 from kitsune.sumo.urlresolvers import reverse
+from kitsune.tidings.models import Watch
 from kitsune.users.models import Profile
-from kitsune.users.tests import TestCaseBase, UserFactory, add_permission
+from kitsune.users.tests import UserFactory, add_permission
 from kitsune.wiki.tests import RevisionFactory
 
 
-class EditProfileTests(TestCaseBase):
+class EditProfileTests(TestCase):
     def test_edit_my_ProfileFactory(self):
         user = UserFactory()
         url = reverse("users.edit_my_profile")
@@ -45,7 +45,7 @@ class EditProfileTests(TestCaseBase):
                     key,
                 )
 
-        self.assertEqual(data["timezone"], profile.timezone.zone)
+        self.assertEqual(data["timezone"], str(profile.timezone))
         self.assertEqual(data["username"], profile.user.username)
 
     def test_user_cant_edit_others_profile_without_permission(self):
@@ -102,11 +102,11 @@ class EditProfileTests(TestCaseBase):
                     key,
                 )
 
-        self.assertEqual(data["timezone"], profile.timezone.zone)
+        self.assertEqual(data["timezone"], str(profile.timezone))
         self.assertEqual(data["username"], profile.user.username)
 
 
-class ViewProfileTests(TestCaseBase):
+class ViewProfileTests(TestCase):
     def setUp(self):
         self.u = UserFactory(profile__name="", profile__website="")
         self.profile = self.u.profile
@@ -121,7 +121,7 @@ class ViewProfileTests(TestCaseBase):
         self.assertEqual(0, doc(".contact").length)
         # Check canonical url
         self.assertEqual(
-            "%s/en-US/user/%s" % (settings.CANONICAL_URL, self.u.username),
+            "%s/en-US/user/%s/" % (settings.CANONICAL_URL, self.u.username),
             doc('link[rel="canonical"]')[0].attrib["href"],
         )
 
@@ -152,6 +152,13 @@ class ViewProfileTests(TestCaseBase):
         r = self.client.get(reverse("users.profile", args=[self.u.username]))
         self.assertEqual(200, r.status_code)
         assert b"<p>my dude image </p>" in r.content
+
+    def test_bio_abbr(self):
+        self.profile.bio = '<abbr title="my full thing">MFT</abbr>'
+        self.profile.save()
+        r = self.client.get(reverse("users.profile", args=[self.u.username]))
+        self.assertEqual(200, r.status_code)
+        assert b'<abbr title="my full thing">MFT</abbr>' in r.content
 
     def test_num_documents(self):
         """Verify the number of documents contributed by user."""
@@ -192,7 +199,7 @@ class ViewProfileTests(TestCaseBase):
         assert badge_title.encode() in r.content
 
 
-class FlagProfileTests(TestCaseBase):
+class FlagProfileTests(TestCase):
     def test_flagged_and_deleted_ProfileFactory(self):
         u = UserFactory()
         p = u.profile
@@ -212,7 +219,7 @@ class FlagProfileTests(TestCaseBase):
         self.assertEqual(1, len(doc("#flagged-queue form.update")))
 
 
-class EditWatchListTests(TestCaseBase):
+class EditWatchListTests(TestCase):
     """Test manage watch list"""
 
     def setUp(self):

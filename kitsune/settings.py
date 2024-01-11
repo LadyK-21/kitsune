@@ -5,11 +5,9 @@ import logging
 import os
 import platform
 import re
-from datetime import date
 
 import dj_database_url
 import django_cache_url
-import pymysql
 from decouple import Csv, config
 
 from kitsune.lib.sumo_locales import LOCALES
@@ -22,6 +20,8 @@ STAGE = config("STAGE", default=False, cast=bool)
 # TODO
 # LOG_LEVEL = config('LOG_LEVEL', default='INFO', cast=labmda x: getattr(logging, x))
 LOG_LEVEL = config("LOG_LEVEL", default=logging.INFO)
+# Set to 'json' for MozLog format (https://wiki.mozilla.org/Firefox/Services/Logging)
+LOG_FORMAT = config("LOG_FORMAT", default="")
 
 SYSLOG_TAG = "http_sumo_app"
 
@@ -64,15 +64,10 @@ def parse_conn_max_age(value):
 
 DB_CONN_MAX_AGE = config("DB_CONN_MAX_AGE", default=60, cast=parse_conn_max_age)
 
-DATABASES = {
-    "default": config("DATABASE_URL", cast=dj_database_url.parse),
-}
+DATABASES = {"default": config("DATABASE_URL", cast=dj_database_url.parse)}
 
-if DATABASES["default"]["ENGINE"] == "django.db.backends.mysql":
+if DATABASES["default"]["ENGINE"] == "django.db.backends.postgresql":
     DATABASES["default"]["CONN_MAX_AGE"] = DB_CONN_MAX_AGE
-    DATABASES["default"]["OPTIONS"] = {"init_command": "SET default_storage_engine=InnoDB"}
-
-pymysql.install_as_MySQLdb()
 
 # Cache Settings
 CACHES = {
@@ -244,6 +239,7 @@ NON_SUPPORTED_LOCALES = {
     "br": "fr",
     "cak": None,
     "csb": "pl",
+    "co": None,
     "cy": None,
     "eo": None,
     "ff": None,
@@ -251,7 +247,11 @@ NON_SUPPORTED_LOCALES = {
     "gd": None,
     "hy-AM": None,
     "ilo": None,
+    "ia": None,
+    "in": "id",
     "is": None,
+    "iw": "he",
+    "iw-IL": "he",
     "kab": None,
     "kk": None,
     "lg": None,
@@ -271,10 +271,15 @@ NON_SUPPORTED_LOCALES = {
     "pa-IN": None,
     "rm": None,
     "rw": None,
+    "sc": "it",
+    "sco": None,
     "sah": None,
     "son": None,
+    "su": None,
     "sv-SE": "sv",
+    "szl": "pl",
     "tl": None,
+    "trs": "es",
     "uz": None,
 }
 
@@ -373,7 +378,20 @@ STATICFILES_FINDERS = (
     "django.contrib.staticfiles.finders.AppDirectoriesFinder",
 )
 
-STATICFILES_STORAGE = "django.contrib.staticfiles.storage.StaticFilesStorage"
+STORAGES = {
+    "default": {
+        # Default storage engine - ours does not preserve filenames
+        "BACKEND": "kitsune.upload.storage.RenameFileStorage"
+    },
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
+
+# Set the TRUSTED_PROXY_COUNT to the number of trusted proxies (load balancers,
+# CDN's, etc.) in place prior to the Django instance or Kubernetes service. Each
+# of the proxies is assumed to append its IP to the "X-Forwarded-For" HTTP header
+# after the real client IP. The real client IP can be preceded by untrusted IPs,
+# so "X-Forwarded-For: untrusted-client-ip, ..., real-client-ip, proxy-ip, ...".
+TRUSTED_PROXY_COUNT = config("TRUSTED_PROXY_COUNT", cast=int, default=1)
 
 
 def immutable_file_test(path, url):
@@ -385,26 +403,6 @@ WHITENOISE_IMMUTABLE_FILE_TEST = immutable_file_test
 WEBPACK_LRU_CACHE = 128
 if DEV or TEST:
     WEBPACK_LRU_CACHE = 0
-
-# Paths that don't require a locale prefix.
-SUPPORTED_NONLOCALES = (
-    "1",
-    "admin",
-    "api",
-    "favicon.ico",
-    "media",
-    "postcrash",
-    "robots.txt",
-    "manifest.json",
-    "services",
-    "wafflejs",
-    "geoip-suggestion",
-    "contribute.json",
-    "oidc",
-    "healthz",
-    "readiness",
-    "__debug__",
-)
 
 # Make this unique, and don't share it with anybody.
 SECRET_KEY = config("SECRET_KEY")
@@ -427,6 +425,7 @@ _CONTEXT_PROCESSORS = [
 TEMPLATES = [
     {
         "BACKEND": "django_jinja.backend.Jinja2",
+        "NAME": "jinja2",
         "DIRS": [
             path("dist"),
         ],
@@ -441,15 +440,16 @@ TEMPLATES = [
             "context_processors": _CONTEXT_PROCESSORS,
             "undefined": "jinja2.Undefined",
             "extensions": [
-                "puente.ext.i18n",
                 "waffle.jinja.WaffleExtension",
-                "jinja2.ext.autoescape",
-                "jinja2.ext.with_",
                 "jinja2.ext.do",
                 "django_jinja.builtins.extensions.CsrfExtension",
                 "django_jinja.builtins.extensions.StaticFilesExtension",
                 "django_jinja.builtins.extensions.DjangoFiltersExtension",
+                "jinja2.ext.i18n",
             ],
+            "policies": {
+                "ext.i18n.trimmed": True,
+            },
         },
     },
     {
@@ -464,31 +464,31 @@ TEMPLATES = [
 ]
 
 
-MIDDLEWARE = (
+MIDDLEWARE: tuple[str, ...] = (
     "kitsune.sumo.middleware.HostnameMiddleware",
     "allow_cidr.middleware.AllowCIDRMiddleware",
     "kitsune.sumo.middleware.FilterByUserAgentMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
-    "commonware.request.middleware.SetRemoteAddrFromForwardedFor",
+    "kitsune.sumo.middleware.SetRemoteAddrFromForwardedFor",
     "kitsune.sumo.middleware.EnforceHostIPMiddleware",
-    # VaryNoCacheMiddleware must be above LocaleURLMiddleware
-    # so that it can see the response has a vary on accept-language
+    # VaryNoCacheMiddleware must be above LocaleMiddleware
+    # so that it can see the response has a vary on accept-language.
     "kitsune.sumo.middleware.VaryNoCacheMiddleware",
-    # LocaleURLMiddleware requires access to request.user. These two must be
-    # loaded before the LocaleURLMiddleware
+    # LocaleMiddleware requires access to request.user. These two must be
+    # loaded before the LocaleMiddleware.
     "commonware.middleware.NoVarySessionMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     # This has to come after NoVarySessionMiddleware.
     "django.contrib.messages.middleware.MessageMiddleware",
-    # refresh middleware for Firefox Accounts
+    # refresh middleware for Mozilla accounts
     "kitsune.sumo.middleware.ValidateAccessTokenMiddleware",
     # refresh middleware for the Admin interface - uses IAM
     "kitsune.sumo.middleware.SUMORefreshIDTokenAdminMiddleware",
-    # LocaleURLMiddleware must be before any middleware that uses
-    # sumo.urlresolvers.reverse() to add locale prefixes to URLs:
-    "kitsune.sumo.middleware.LocaleURLMiddleware",
+    # LocaleMiddleware must be before any middleware that uses
+    # sumo.urlresolvers.reverse() to add locale prefixes to URLs.
+    "kitsune.sumo.middleware.LocaleMiddleware",
     "kitsune.sumo.middleware.Forbidden403Middleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -507,6 +507,7 @@ MIDDLEWARE = (
     "kitsune.users.middleware.LogoutDeactivatedUsersMiddleware",
     "kitsune.users.middleware.LogoutInvalidatedSessionsMiddleware",
     "csp.middleware.CSPMiddleware",
+    "dockerflow.django.middleware.DockerflowMiddleware",
 )
 
 # SecurityMiddleware settings
@@ -519,6 +520,9 @@ SECURE_REDIRECT_EXEMPT = [
     r"^healthz/$",
     r"^readiness/$",
 ]
+SECURE_REFERRER_POLICY = config(
+    "SECURE_REFERRER_POLICY", default="strict-origin-when-cross-origin"
+)
 USE_X_FORWARDED_HOST = config("USE_X_FORWARDED_HOST", default=False, cast=bool)
 if config("USE_SECURE_PROXY_HEADER", default=SECURE_SSL_REDIRECT, cast=bool):
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
@@ -531,11 +535,12 @@ WATCHMAN_CHECKS = (
 )
 
 # Auth
-AUTHENTICATION_BACKENDS = (
+AUTHENTICATION_BACKENDS: tuple[str, ...] = (
     # This backend is used for the /admin interface
     "kitsune.users.auth.SumoOIDCAuthBackend",
     "kitsune.users.auth.FXAAuthBackend",
     "django.contrib.auth.backends.ModelBackend",
+    "guardian.backends.ObjectPermissionBackend",
 )
 if READ_ONLY:
     AUTHENTICATION_BACKENDS = ("kitsune.sumo.readonlyauth.ReadOnlyBackend",)
@@ -559,14 +564,14 @@ else:
         OIDC_RP_CLIENT_ID = config("OIDC_RP_CLIENT_ID", default="")
         OIDC_RP_CLIENT_SECRET = config("OIDC_RP_CLIENT_SECRET", default="")
         OIDC_CREATE_USER = config("OIDC_CREATE_USER", default=False, cast=bool)
-        # Exempt Firefox Accounts urls
+        # Exempt Mozilla accounts urls
         OIDC_EXEMPT_URLS = [
             "users.fxa_authentication_init",
             "users.fxa_authentication_callback",
             "users.fxa_logout_url",
             "users.fxa_webhook",
         ]
-        # Firefox Accounts configuration
+        # Mozilla accounts configuration
         FXA_OP_TOKEN_ENDPOINT = config("FXA_OP_TOKEN_ENDPOINT", default="")
         FXA_OP_AUTHORIZATION_ENDPOINT = config("FXA_OP_AUTHORIZATION_ENDPOINT", default="")
         FXA_OP_USER_ENDPOINT = config("FXA_OP_USER_ENDPOINT", default="")
@@ -607,6 +612,10 @@ AVATAR_SIZE = 200  # in pixels
 MAX_AVATAR_FILE_SIZE = 1310720  # 1MB, in bytes
 GROUP_AVATAR_PATH = "uploads/groupavatars/"
 
+# Informs django-guardian that we don't want to enable object-level
+# permissions for anonymous users.
+ANONYMOUS_USER_NAME = None
+
 ACCOUNT_ACTIVATION_DAYS = 30
 
 PASSWORD_HASHERS = ("kitsune.users.hashers.SHA256PasswordHasher",)
@@ -617,30 +626,26 @@ ROOT_URLCONF = "%s.urls" % PROJECT_MODULE
 
 # TODO: Figure out why changing the order of apps (for example, moving
 # taggit higher in the list) breaks tests.
-INSTALLED_APPS = (
+INSTALLED_APPS: tuple[str, ...] = (
     "django.contrib.contenttypes",
     "django.contrib.auth",
     "django.contrib.sessions",
     "django.contrib.sites",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "graphene_django",
     "mozilla_django_oidc",
     "corsheaders",
     "kitsune.users",
-    "dennis.django_dennis",
-    "puente",
-    "authority",
+    "guardian",
     "waffle",
     "storages",
     "kitsune.access",
     "kitsune.sumo",
     "kitsune.search",
     "kitsune.forums",
-    "tidings",
     "rest_framework.authtoken",
     "kitsune.questions",
-    "adminplus",
-    "kitsune.kadmin",
     "kitsune.kbadge",
     "taggit",
     "kitsune.flagit",
@@ -665,10 +670,12 @@ INSTALLED_APPS = (
     "kitsune.products",
     "kitsune.notifications",
     "kitsune.journal",
-    "kitsune.motidings",
+    "kitsune.tidings",
     "rest_framework",
     "statici18n",
     "watchman",
+    "bandit",
+    "dockerflow.django",
     # 'axes',
     # Extra app for python migrations.
     "django_extensions",
@@ -684,7 +691,7 @@ INSTALLED_APPS = (
 def JINJA_CONFIG():
     config = {
         "extensions": [
-            "puente.ext.i18n",
+            "jinja2.ext.i18n",
         ],
         "finalize": lambda x: x if x is not None else "",
         "autoescape": True,
@@ -692,34 +699,6 @@ def JINJA_CONFIG():
 
     return config
 
-
-# Tells the extract script what files to look for l10n in and what
-# function handles the extraction. Puente expects this.
-PUENTE = {
-    "BASE_DIR": ROOT,
-    "DOMAIN_METHODS": {
-        "django": [
-            ("kitsune/forums/**.py", "ignore"),
-            ("kitsune/forums/**.html", "ignore"),
-            ("kitsune/**/tests/**.py", "ignore"),
-            ("kitsune/**/management/**.py", "ignore"),
-            ("kitsune/forums/**.lhtml", "ignore"),
-            ("kitsune/**.py", "python"),
-            ("kitsune/**/templates/**.html", "jinja2"),
-            ("kitsune/**/jinja2/**.html", "jinja2"),
-            ("kitsune/**/jinja2/**.lhtml", "jinja2"),
-            ("kitsune/**/jinja2/**.ltxt", "jinja2"),
-            ("vendor/src/django-tidings/**/templates/**.html", "jinja2"),
-        ],
-        "djangojs": [
-            # We can't say **.js because that would dive into any libraries.
-            ("kitsune/**/static/**/js/*-all.js", "ignore"),
-            ("kitsune/**/static/**/js/*-min.js", "ignore"),
-            ("kitsune/**/static/**/js/*.js", "javascript"),
-            ("kitsune/**/static/**/tpl/**.njk", "jinja2"),
-        ],
-    },
-}
 
 # These domains will not be merged into messages.pot and will use
 # separate PO files. See the following URL for an example of how to
@@ -754,14 +733,14 @@ CSRF_COOKIE_SECURE = config("CSRF_COOKIE_SECURE", default=not DEBUG, cast=bool)
 #
 # Connection information for Elastic 7
 ES_TIMEOUT = 5  # Timeout for querying requests
-ES7_URLS = config("ES7_URLS", cast=Csv(), default="elasticsearch7:9200")
-ES7_CLOUD_ID = config("ES7_CLOUD_ID", default="")
-ES7_USE_SSL = config("ES7_USE_SSL", default=False, cast=bool)
-ES7_HTTP_AUTH = config("ES7_HTTP_AUTH", default="", cast=Csv())
-ES7_ENABLE_CONSOLE_LOGGING = config("ES7_ENABLE_CONSOLE_LOGGING", default=False, cast=bool)
-# Pass parameters to the ES7 client
+ES_URLS = config("ES_URLS", cast=Csv(), default="elasticsearch:9200")
+ES_CLOUD_ID = config("ES_CLOUD_ID", default="")
+ES_USE_SSL = config("ES_USE_SSL", default=False, cast=bool)
+ES_HTTP_AUTH = config("ES_HTTP_AUTH", default="", cast=Csv())
+ES_ENABLE_CONSOLE_LOGGING = config("ES_ENABLE_CONSOLE_LOGGING", default=False, cast=bool)
+# Pass parameters to the ES client
 # like "search_type": "dfs_query_then_fetch"
-ES7_SEARCH_PARAMS = {"request_timeout": ES_TIMEOUT}
+ES_SEARCH_PARAMS = {"request_timeout": ES_TIMEOUT}
 
 # This is prepended to index names to get the final read/write index
 # names used by kitsune. This is so that you can have multiple
@@ -798,8 +777,12 @@ SEARCH_CACHE_PERIOD = config("SEARCH_CACHE_PERIOD", default=15, cast=int)
 # Columns are 250 but this leaves 50 chars for the upload_to prefix
 MAX_FILENAME_LENGTH = 200
 MAX_FILEPATH_LENGTH = 250
-# Default storage engine - ours does not preserve filenames
-DEFAULT_FILE_STORAGE = "kitsune.upload.storage.RenameFileStorage"
+
+# GCP storage settings
+GS_BUCKET_NAME = config("GS_BUCKET_NAME", default="")
+GS_CUSTOM_ENDPOINT = config("MEDIA_URL", default="").rstrip("/")
+GS_LOCATION = config("GS_LOCATION", default="media")
+GS_QUERYSTRING_AUTH = config("GS_QUERYSTRING_AUTH", default=False, cast=bool)
 
 # AWS S3 Storage Settings
 AWS_ACCESS_KEY_ID = config("AWS_ACCESS_KEY_ID", default="")
@@ -848,23 +831,23 @@ EMAIL_LOGGING_REAL_BACKEND = config(
     "EMAIL_LOGGING_REAL_BACKEND", default="django.core.mail.backends.console.EmailBackend"
 )
 EMAIL_SUBJECT_PREFIX = config("EMAIL_SUBJECT_PREFIX", default="[support] ")
-if EMAIL_LOGGING_REAL_BACKEND == "django.core.mail.backends.smtp.EmailBackend":
+if EMAIL_LOGGING_REAL_BACKEND in (
+    "bandit.backends.smtp.HijackSMTPBackend",
+    "django.core.mail.backends.smtp.EmailBackend",
+):
     EMAIL_HOST = config("EMAIL_HOST")
     EMAIL_HOST_USER = config("EMAIL_HOST_USER")
     EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD")
     EMAIL_PORT = config("EMAIL_PORT", default=25, cast=int)
     EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=False, cast=bool)
 
+# If using "bandit.backends.smtp.HijackSMTPBackend", set the target email address(es).
+BANDIT_EMAIL = config("BANDIT_EMAIL", default="", cast=Csv())
 
 # Celery
 CELERY_TASK_PROTOCOL = 2
 CELERY_TASK_SERIALIZER = config("CELERY_TASK_SERIALIZER", default="json")
 CELERY_RESULT_SERIALIZER = config("CELERY_RESULT_SERIALIZER", default="json")
-CELERY_ACCEPT_CONTENT = config(
-    "CELERY_ACCEPT_CONTENT",
-    default="pickle, json",
-    cast=lambda v: [s.strip() for s in v.split(",")],
-)
 CELERY_TASK_IGNORE_RESULT = config("CELERY_TASK_IGNORE_RESULT", default=True, cast=bool)
 if not CELERY_TASK_IGNORE_RESULT:
     # E.g. redis://localhost:6479/1
@@ -910,9 +893,9 @@ THUMBNAIL_PROGRESS_WIDTH = 32  # width of the above image
 THUMBNAIL_PROGRESS_HEIGHT = 32  # height of the above image
 VIDEO_MAX_FILESIZE = 52428800  # 50 megabytes, in bytes
 
-BITLY_API_URL = config("BITLY_API_URL", default="http://api.bitly.com/v3/shorten?callback=?")
-BITLY_LOGIN = config("BITLY_LOGIN", default=None)
-BITLY_API_KEY = config("BITLY_API_KEY", default=None)
+BITLY_API_URL = config("BITLY_API_URL", default="https://api-ssl.bitly.com/v4/shorten")
+BITLY_GUID = config("BITLY_GUID", default="")
+BITLY_ACCESS_TOKEN = config("BITLY_ACCESS_TOKEN", default="")
 
 TIDINGS_FROM_ADDRESS = config("TIDINGS_FROM_ADDRESS", default="notifications@support.mozilla.org")
 # Anonymous watches must be confirmed.
@@ -926,10 +909,6 @@ TIDINGS_REVERSE = "kitsune.sumo.urlresolvers.reverse"
 # Google Analytics settings.
 # GA_KEY is expected b64 encoded.
 GA_KEY = config("GA_KEY", default=None)  # Google API client key
-if GA_KEY:
-    import base64
-
-    GA_KEY = base64.b64decode(GA_KEY)
 GA_ACCOUNT = config(
     "GA_ACCOUNT", "something@developer.gserviceaccount.com"
 )  # Google API Service Account email address
@@ -994,7 +973,6 @@ def show_toolbar_callback(*args):
 SHOW_DEBUG_TOOLBAR = show_toolbar_callback()
 
 if SHOW_DEBUG_TOOLBAR:
-
     DEBUG_TOOLBAR_CONFIG = {"SHOW_TOOLBAR_CALLBACK": "kitsune.settings.show_toolbar_callback"}
 
     INSTALLED_APPS = INSTALLED_APPS + ("debug_toolbar",)
@@ -1005,26 +983,27 @@ if SHOW_DEBUG_TOOLBAR:
 ATOMIC_REQUESTS = config("ATOMIC_REQUESTS", default=True, cast=bool)
 
 # CORS Setup
-CORS_ORIGIN_ALLOW_ALL = True
-CORS_URLS_REGEX = [
-    r"^/api/1/gallery/.*$",
-    r"^/api/1/kb/.*$",
-    r"^/api/1/products/.*",
-    r"^/api/1/users/get_token$",
-    r"^/api/1/users/test_auth$",
-    r"^/api/2/answer/.*$",
-    r"^/api/2/pushnotification/.*$",
-    r"^/api/2/notification/.*$",
-    r"^/api/2/question/.*$",
-    r"^/api/2/realtime/.*$",
-    r"^/api/2/search/.*$",
-    r"^/api/2/user/.*$",
-]
-# Now combine all those regexes with one big "or".
-CORS_URLS_REGEX = re.compile("|".join("({0})".format(r) for r in CORS_URLS_REGEX))
-
-# XXX Fix this when Bug 1059545 is fixed
-CC_IGNORE_USERS = []
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_URLS_REGEX = re.compile(
+    "|".join(
+        "({0})".format(r)
+        for r in [
+            r"^/api/1/gallery/.*$",
+            r"^/api/1/kb/.*$",
+            r"^/api/1/products/.*",
+            r"^/api/1/users/get_token$",
+            r"^/api/1/users/test_auth$",
+            r"^/api/2/answer/.*$",
+            r"^/api/2/pushnotification/.*$",
+            r"^/api/2/notification/.*$",
+            r"^/api/2/question/.*$",
+            r"^/api/2/realtime/.*$",
+            r"^/api/2/search/.*$",
+            r"^/api/2/user/.*$",
+            r"^/graphql/.*$",
+        ]
+    )
+)
 
 ACTSTREAM_SETTINGS = {
     "USE_JSONFIELD": True,
@@ -1033,6 +1012,11 @@ ACTSTREAM_SETTINGS = {
 SILENCED_SYSTEM_CHECKS = [
     "fields.W340",  # null has no effect on ManyToManyField.
     "fields.W342",  # ForeignKey(unique=True) is usually better served by a OneToOneField
+]
+
+DOCKERFLOW_CHECKS = [
+    "dockerflow.django.checks.check_database_connected",
+    "dockerflow.django.checks.check_migrations_applied",
 ]
 
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="", cast=Csv())
@@ -1066,6 +1050,7 @@ if config("SENTRY_DSN", None):
         server_name=PLATFORM_NAME,
         environment=config("SENTRY_ENVIRONMENT", default=""),
         before_send=filter_exceptions,
+        sample_rate=config("SENTRY_SAMPLE_RATE", 1.0),
     )
 
 # Dead Man Snitches
@@ -1083,7 +1068,7 @@ DMS_UPDATE_SEARCH_CTR_METRIC = config("DMS_UPDATE_SEARCH_CTR_METRIC", default=No
 DMS_UPDATE_CONTRIBUTOR_METRICS = config("DMS_UPDATE_CONTRIBUTOR_METRICS", default=None)
 DMS_AUTO_ARCHIVE_OLD_QUESTIONS = config("DMS_AUTO_ARCHIVE_OLD_QUESTIONS", default=None)
 DMS_REINDEX = config("DMS_REINDEX", default=None)
-DMS_REINDEX_ES7 = config("DMS_REINDEX_ES7", default=None)
+DMS_REINDEX_ES = config("DMS_REINDEX_ES", default=None)
 # DMS_PROCESS_EXIT_SURVEYS = config("DMS_PROCESS_EXIT_SURVEYS", default=None)
 # DMS_SURVEY_RECENT_ASKERS = config("DMS_SURVEY_RECENT_ASKERS", default=None)
 # DMS_UPDATE_VISITORS_METRIC = config('DMS_UPDATE_VISITORS_METRIC', default=None)
@@ -1147,7 +1132,7 @@ TOLL_FREE_REGEX = re.compile(r"^.*8(00|33|44|55|66|77|88)[2-9]\d{6,}$")
 REGEX_TIMEOUT = config("REGEX_TIMEOUT", default=5, cast=int)
 NANP_REGEX = re.compile(r"[0-9]{3}-?[a-zA-Z2-9][a-zA-Z0-9]{2}-?[a-zA-Z0-9]{4}")
 
-if ES7_ENABLE_CONSOLE_LOGGING and DEV:
+if ES_ENABLE_CONSOLE_LOGGING and DEV:
     es_trace_logger = logging.getLogger("elasticsearch.trace")
     es_trace_logger.setLevel(logging.INFO)
     handler = logging.StreamHandler()
@@ -1160,38 +1145,44 @@ ZENDESK_USER_EMAIL = config("ZENDESK_USER_EMAIL", default="")
 ZENDESK_TICKET_FORM_ID = config("ZENDESK_TICKET_FORM_ID", default="360000417171", cast=int)
 ZENDESK_PRODUCT_FIELD_ID = config("ZENDESK_PRODUCT_FIELD_ID", default="360047198211", cast=int)
 ZENDESK_CATEGORY_FIELD_ID = config("ZENDESK_CATEGORY_FIELD_ID", default="360047206172", cast=int)
+ZENDESK_CONTACT_LABEL_ID = config("ZENDESK_CONTACT_LABEL_ID", default="1900002215047", cast=int)
 ZENDESK_OS_FIELD_ID = config("ZENDESK_OS_FIELD_ID", default="360018604871", cast=int)
 ZENDESK_COUNTRY_FIELD_ID = config("ZENDESK_COUNTRY_FIELD_ID", default="360026463511", cast=int)
 
+# Products that allow un-authenticated users to submit support requests
+LOGIN_EXCEPTIONS = frozenset(["mozilla-account"])
+
 # Django CSP configuration
-CSP_INCLUDE_NONCE_IN = ["script-src"]
+CSP_INCLUDE_NONCE_IN = ["script-src", "style-src"]
 
 CSP_DEFAULT_SRC = ("'none'",)
 
-CSP_SCRIPT_SRC = (
+CSP_SCRIPT_SRC: tuple[str, ...] = (
     "'self'",
     "https://*.mozilla.org",
-    "https://*.itsre-sumo.mozilla.net",
+    "https://*.webservices.mozgcp.net",
     "https://*.google-analytics.com",
     "https://*.googletagmanager.com",
     "https://pontoon.mozilla.org",
+    "https://*.jsdelivr.net",
 )
 
 CSP_IMG_SRC = (
     "'self'",
     "data:",
     "https://*.mozaws.net",
-    "https://*.itsre-sumo.mozilla.net",
+    "https://*.webservices.mozgcp.net",
     "https://*.google-analytics.com",
     "https://profile.accounts.firefox.com",
     "https://firefoxusercontent.com",
     "https://secure.gravatar.com",
     "https://i1.wp.com",
+    "https://mozillausercontent.com",
 )
 
 CSP_MEDIA_SRC = (
     "'self'",
-    "https://*.itsre-sumo.mozilla.net",
+    "https://*.webservices.mozgcp.net",
 )
 
 CSP_FRAME_SRC = (
@@ -1201,15 +1192,20 @@ CSP_FRAME_SRC = (
 
 CSP_FONT_SRC = (
     "'self'",
-    "https://*.itsre-sumo.mozilla.net",
+    "https://*.webservices.mozgcp.net",
 )
 
-CSP_STYLE_SRC = (
+CSP_STYLE_SRC: tuple[str, ...] = (
     "'self'",
-    "https://*.itsre-sumo.mozilla.net",
+    "https://*.webservices.mozgcp.net",
+    "https://*.jsdelivr.net",
 )
 
-CSP_FORM_ACTION = ("'self'",)
+CSP_FORM_ACTION = (
+    "'self'",
+    "https://accounts.firefox.com",
+    "https://accounts.stage.mozaws.net",
+)
 
 CSP_MANIFEST_SRC = (
     "https://support.allizom.org",
@@ -1220,4 +1216,66 @@ CSP_CONNECT_SRC = (
     "'self'",
     "https://*.google-analytics.com",
     "https://location.services.mozilla.com",
+    "https://accounts.firefox.com/metrics-flow",
+    "https://accounts.stage.mozaws.net/metrics-flow",
+    "https://basket.mozilla.org",
 )
+
+if DEBUG:
+    CSP_STYLE_SRC += ("'unsafe-inline'",)
+    CSP_SCRIPT_SRC += (
+        "'unsafe-inline'",
+        "'unsafe-eval'",
+    )
+
+# Trusted Contributor Groups
+TRUSTED_GROUPS = [
+    "Forum Moderators",
+    "Administrators",
+    "SUMO Locale Leaders",
+    "Knowledge Base Reviewers",
+    "Reviewers",
+    # Temporary workaround to exempt individual users if needed
+    "Escape Spam Filtering",
+    "trusted contributors",
+    "kb-contributors",
+    "l10n-contributors",
+    "forum-contributors",
+    "social-contributors",
+    "mobile-contributors",
+]
+
+# GraphQL configuration
+GRAPHENE: dict[str, str | tuple[str, ...]] = {
+    "SCHEMA": "kitsune.schema.schema",
+}
+if not DEV:
+    GRAPHENE["MIDDLEWARE"] = ("kitsune.graphql.middleware.DisableIntrospectionMiddleware",)
+
+# Contributor Groups
+LEGACY_CONTRIBUTOR_GROUPS = [
+    "Contributors",
+    "Registered as contributor",
+    "trusted contributors",
+]
+
+
+FIREFOX_SWITCHING_DEVICES_ARTICLES = config(
+    "FIREFOX_SWITCHING_DEVICES_ARTICLES", default="switching-devices", cast=Csv()
+)
+FIREFOX_SWITCHING_DEVICES_TOPIC = config(
+    "FIREFOX_SWITCHING_DEVICES_TOPIC", default="back-up-your-data"
+)
+
+# Slugs of articles that have a special CTA for Mozilla account
+MOZILLA_ACCOUNT_ARTICLES = [
+    "firefox-accounts-supportmozillaorg",
+    "log-pocket-your-firefox-account",
+    "how-do-i-delete-my-firefox-account",
+    "how-reset-your-password-without-account-recovery-keys-access-data",
+    "reset-your-firefox-account-password-recovery-keys",
+    "what-if-im-locked-out-two-step-authentication",
+    "im-having-problems-my-firefox-account",
+    "accounts-blocked",
+    "im-having-problems-confirming-my-firefox-account",
+]

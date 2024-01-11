@@ -2,6 +2,7 @@ from datetime import datetime
 
 from django.conf import settings
 
+from kitsune.dashboards.models import LAST_30_DAYS, WikiDocumentVisits
 from kitsune.dashboards.readouts import (
     AdministrationReadout,
     CannedResponsesReadout,
@@ -89,6 +90,25 @@ class KBOverviewTests(TestCase):
         self.assertEqual(1, len(kb_overview_rows()))
         self.assertEqual(0, len(kb_overview_rows(category=CATEGORIES[0][0])))
         self.assertEqual(1, len(kb_overview_rows(category=CATEGORIES[1][0])))
+
+    def test_num_visits(self):
+        d1 = DocumentFactory()
+        d2 = DocumentFactory()
+        DocumentFactory()
+        DocumentFactory()
+
+        WikiDocumentVisits.objects.create(document=d1, visits=5, period=LAST_30_DAYS)
+        WikiDocumentVisits.objects.create(document=d2, visits=1, period=LAST_30_DAYS)
+
+        rows = kb_overview_rows(max=3)
+
+        self.assertEqual(3, len(rows))
+        self.assertEqual(rows[0]["num_visits"], 5)
+        self.assertEqual(rows[0]["visits_ratio"], 1.0)
+        self.assertEqual(rows[1]["num_visits"], 1)
+        self.assertEqual(rows[1]["visits_ratio"], 0.2)
+        self.assertEqual(rows[2]["num_visits"], None)
+        self.assertNotIn("visits_ratio", rows[2])
 
 
 class L10NOverviewTests(TestCase):
@@ -395,7 +415,7 @@ class TemplateTests(ReadoutTestCase):
 
         self.assertEqual(1, len(self.rows(locale=locale, product=p)))
         self.assertEqual(t.title, self.row(locale=locale, product=p)["title"])
-        self.assertEqual("", self.row(locale=locale, product=p)["status"])
+        self.assertEqual("Updated", self.row(locale=locale, product=p)["status"])
 
     def test_needs_changes(self):
         """Test status for article that needs changes"""
@@ -450,7 +470,7 @@ class HowToContributeTests(ReadoutTestCase):
 
         self.assertEqual(1, len(self.rows(locale=locale, product=p)))
         self.assertEqual(d2.title, self.row(locale=locale, product=p)["title"])
-        self.assertEqual("", self.row(locale=locale, product=p)["status"])
+        self.assertEqual("Updated", self.row(locale=locale, product=p)["status"])
 
 
 class AdministrationTests(ReadoutTestCase):
@@ -469,7 +489,7 @@ class AdministrationTests(ReadoutTestCase):
 
         self.assertEqual(1, len(self.rows(locale=locale, product=p)))
         self.assertEqual(d2.title, self.row(locale=locale, product=p)["title"])
-        self.assertEqual("", self.row(locale=locale, product=p)["status"])
+        self.assertEqual("Updated", self.row(locale=locale, product=p)["status"])
 
 
 class MostVisitedTranslationsTests(ReadoutTestCase):
@@ -533,7 +553,7 @@ class MostVisitedTranslationsTests(ReadoutTestCase):
         translation = TranslatedRevisionFactory(document__locale="de", is_approved=True)
         row = self.row()
         self.assertEqual(row["title"], translation.document.title)
-        self.assertEqual(str(row["status"]), "")
+        self.assertEqual(str(row["status"]), "Updated")
         self.assertEqual(row["status_class"], "ok")
 
     def test_one_rejected_revision(self):

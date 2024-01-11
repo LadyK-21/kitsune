@@ -1,16 +1,12 @@
+from zoneinfo import ZoneInfo
+
 import factory
 from django.contrib.auth.models import Group, Permission, User
 from django.contrib.contenttypes.models import ContentType
-from tidings.models import Watch
 
-from kitsune.sumo.tests import FuzzyUnicode, LocalizingClient, TestCase
-from kitsune.users.models import AccountEvent, CONTRIBUTOR_GROUP, Profile, Setting
-
-
-class TestCaseBase(TestCase):
-    """Base TestCase for the users app test cases."""
-
-    client_class = LocalizingClient
+from kitsune.sumo.tests import FuzzyUnicode
+from kitsune.tidings.models import Watch
+from kitsune.users.models import AccountEvent, ContributionAreas, Profile, Setting
 
 
 class UserFactory(factory.django.DjangoModelFactory):
@@ -35,7 +31,9 @@ class UserFactory(factory.django.DjangoModelFactory):
 class ContributorFactory(UserFactory):
     @factory.post_generation
     def add_contributor_group(user, *args, **kwargs):
-        user.groups.add(GroupFactory(name=CONTRIBUTOR_GROUP))
+        user.groups.add(
+            GroupFactory(name=factory.fuzzy.FuzzyChoice(ContributionAreas.get_groups()))
+        )
 
 
 class ProfileFactory(factory.django.DjangoModelFactory):
@@ -45,7 +43,7 @@ class ProfileFactory(factory.django.DjangoModelFactory):
     name = FuzzyUnicode()
     bio = FuzzyUnicode()
     website = "http://support.example.com"
-    timezone = None
+    timezone = ZoneInfo("US/Pacific")
     country = "US"
     city = "Portland"
     locale = "en-US"

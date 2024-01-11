@@ -8,33 +8,19 @@ from django.contrib.messages.middleware import MessageMiddleware
 from django.contrib.sessions.middleware import SessionMiddleware
 from django.test.client import RequestFactory
 from django.test.utils import override_settings
+from django.http import HttpResponse
 from josepy import jwa, jwk, jws
 from pyquery import PyQuery as pq
 
+from kitsune.messages.models import InboxMessage, OutboxMessage
+from kitsune.messages.utils import send_message
 from kitsune.questions.models import Answer, Question
 from kitsune.questions.tests import AnswerFactory, QuestionFactory
-from kitsune.sumo.tests import LocalizingClient, TestCase
+from kitsune.sumo.tests import TestCase
 from kitsune.sumo.urlresolvers import reverse
-from kitsune.users.models import CONTRIBUTOR_GROUP, AccountEvent, Deactivation, Profile, Setting
+from kitsune.users.models import AccountEvent, Deactivation, Profile, Setting, User
 from kitsune.users.tests import GroupFactory, ProfileFactory, UserFactory, add_permission
 from kitsune.users.views import edit_profile
-
-
-class MakeContributorTests(TestCase):
-    def setUp(self):
-        self.user = UserFactory()
-        self.client.login(username=self.user.username, password="testpass")
-        GroupFactory(name=CONTRIBUTOR_GROUP)
-        super(MakeContributorTests, self).setUp()
-
-    def test_make_contributor(self):
-        """Test adding a user to the contributor group"""
-        self.assertEqual(0, self.user.groups.filter(name=CONTRIBUTOR_GROUP).count())
-
-        response = self.client.post(reverse("users.make_contributor", force_locale=True))
-        self.assertEqual(302, response.status_code)
-
-        self.assertEqual(1, self.user.groups.filter(name=CONTRIBUTOR_GROUP).count())
 
 
 class UserSettingsTests(TestCase):
@@ -131,12 +117,13 @@ class ProfileNotificationTests(TestCase):
         request = RequestFactory().get(reverse("users.edit_profile", args=[user.username]))
         request.user = user
         request.LANGUAGE_CODE = "en"
+        self.get_response = lambda *args, **kwargs: HttpResponse()
 
-        middleware = SessionMiddleware()
+        middleware = SessionMiddleware(self.get_response)
         middleware.process_request(request)
         request.session.save()
 
-        middleware = MessageMiddleware()
+        middleware = MessageMiddleware(self.get_response)
         middleware.process_request(request)
         request.session.save()
         return request
@@ -162,16 +149,14 @@ class ProfileNotificationTests(TestCase):
 
 
 class FXAAuthenticationTests(TestCase):
-    client_class = LocalizingClient
-
     def test_authenticate_does_not_update_session(self):
         self.client.get(reverse("users.fxa_authentication_init"))
         assert not self.client.session.get("is_contributor")
 
     def test_authenticate_does_update_session(self):
-        url = reverse("users.fxa_authentication_init") + "?is_contributor=True"
+        url = reverse("users.fxa_authentication_init") + "?contributor=KB"
         self.client.get(url)
-        assert self.client.session.get("is_contributor")
+        assert self.client.session.get("contributor")
 
 
 def setup_key(test):
@@ -442,3 +427,54 @@ class WebhookViewTests(TestCase):
         )
         self.assertEqual(400, response.status_code)
         self.assertEqual(0, AccountEvent.objects.count())
+
+
+class UserCloseAccountTests(TestCase):
+    def setUp(self):
+        self.user = UserFactory(
+            username="ringo", email="ringo@beatles.com", groups=[GroupFactory()]
+        )
+        self.client.login(username=self.user.username, password="testpass")
+        # Populate inboxes and outboxes with messages between the user and other users.
+        self.other_users = UserFactory.create_batch(2)
+        for sender in self.other_users:
+            send_message([self.user], "foo", sender=sender)
+        send_message(self.other_users, "bar", sender=self.user)
+        super(UserCloseAccountTests, self).setUp()
+
+    def tearDown(self):
+        User.objects.all().delete()
+        InboxMessage.objects.all().delete()
+        OutboxMessage.objects.all().delete()
+
+    def test_close_account(self):
+        """Test the closing of a user's account."""
+        # Confirm the expected initial state.
+        self.assertTrue(self.user.is_active)
+        self.assertTrue(self.user.profile.name)
+        self.assertEqual(self.user.groups.count(), 1)
+        self.assertEqual(self.user.outbox.count(), 1)
+        self.assertEqual(self.user.inbox.count(), len(self.other_users))
+        for other_user in self.other_users:
+            self.assertEqual(other_user.inbox.count(), 1)
+            self.assertEqual(other_user.outbox.count(), 1)
+
+        res = self.client.post(reverse("users.close_account", locale="en-US"))
+        self.assertEqual(200, res.status_code)
+
+        self.user.refresh_from_db()
+
+        # The user should be anonymized.
+        self.assertTrue(self.user.username.startswith("user"))
+        self.assertTrue(self.user.email.endswith("@example.com"))
+        # The user should be deactivated, and the user's profile and groups cleared.
+        self.assertFalse(self.user.is_active)
+        self.assertFalse(self.user.profile.name)
+        self.assertEqual(self.user.groups.count(), 0)
+        # Confirm that the user's inbox and outbox have been cleared, and
+        # that the inbox and outbox of each of the other users remain intact.
+        self.assertEqual(self.user.outbox.count(), 0)
+        self.assertEqual(self.user.inbox.count(), 0)
+        for other_user in self.other_users:
+            self.assertEqual(other_user.inbox.count(), 1)
+            self.assertEqual(other_user.outbox.count(), 1)

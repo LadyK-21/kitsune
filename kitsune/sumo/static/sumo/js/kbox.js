@@ -118,7 +118,7 @@ KBox.prototype = {
 
     // If we have a click target, open the kbox when it is clicked.
     if (self.$clickTarget) {
-      self.$clickTarget.click(function(ev) {
+      self.$clickTarget.on("click", function(ev) {
         ev.preventDefault();
         self.open();
       });
@@ -163,7 +163,7 @@ KBox.prototype = {
     self.$kbox.find('.kbox-placeholder').replaceWith(self.$el.detach());
 
     // Handle close events
-    self.$kbox.delegate('.kbox-close, .kbox-cancel', 'click', function(ev) {
+    self.$kbox.on('click', '.kbox-close, .kbox-cancel', function(ev) {
       ev.preventDefault();
       self.close();
     });
@@ -197,7 +197,7 @@ KBox.prototype = {
           self.close();
         }
       };
-      $(document).keypress(self.keypressHandler);
+      $(document).on('keypress', self.keypressHandler);
     }
 
     // Handle outside clicks
@@ -209,7 +209,7 @@ KBox.prototype = {
         }
       };
       setTimeout(function() { // so it doesn't get triggered on this click
-        $('body').click(self.clickHandler);
+        $('body').on("click", self.clickHandler);
       }, 0);
     }
   },
@@ -264,10 +264,10 @@ KBox.prototype = {
       self.destroy();
     }
     if (self.options.closeOnEsc) {
-      $('body').unbind('keypress', self.keypressHandler);
+      $('body').off('keypress', self.keypressHandler);
     }
     if (self.options.closeOnOutClick) {
-      $('body').unbind('click', self.clickHandler);
+      $('body').off('click', self.clickHandler);
     }
   },
   destroy: function() {

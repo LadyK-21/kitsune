@@ -9,6 +9,9 @@
                  (None, _('Translate Article'))] %}
 {% set classes = 'translate' %}
 {% set scripts = ('wiki', 'wiki.diff', 'wiki.editor') %}
+{% if document.is_switching_devices_document %}
+  {% set scripts = scripts + ('switching-devices',) %}
+{% endif %}
 
 {% block content %}
   {% set language = settings.LANGUAGES_DICT[locale.lower()] %}
@@ -22,7 +25,7 @@
           </li>
         {% endif %}
 
-        {% if draft_revision %}  
+        {% if draft_revision %}
           <li class="mzp-c-notification-bar mzp-t-info info">
             <button class="mzp-c-notification-bar-button" type="button"></button>
             <div>
@@ -127,7 +130,7 @@
               {% for rev in recent_approved_revs %}
                 <li>
                   <a href="{{ url('wiki.revision', parent.slug, rev.id, locale=parent.locale) }}" rel="nofollow, noindex">{{ datetimeformat(rev.created, format='date') }}</a>:
-                  [<a href="{{ profile_url(rev.creator) }}">{{ display_name(rev.creator) }}</a>]
+                  [<a rel="nofollow" href="{{ profile_url(rev.creator) }}">{{ display_name(rev.creator) }}</a>]
                   {{ rev.comment }}
                 </li>
               {% endfor %}

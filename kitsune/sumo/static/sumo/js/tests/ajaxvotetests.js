@@ -1,4 +1,3 @@
-import React from 'react';
 import {expect} from 'chai';
 import sinon from 'sinon';
 
@@ -8,19 +7,16 @@ describe('ajaxvote', () => {
   describe('helpful vote', () => {
     beforeEach(() => {
       sinon.stub($, 'ajax').yieldsTo('success', {message: 'Thanks for the vote!'});
-
-      let sandbox = (
-        <form className="vote" action="/vote" method="post">
-          <input type="submit" name="helpful" defaultValue="Yes" />
-          <input type="submit" name="not-helpful" defaultValue="No" />
-        </form>
+      $('body').empty().html(`
+        <form class="vote" action="/vote" method="post">
+          <input type="submit" name="helpful" value="Yes">
+          <input type="submit" name="not-helpful" value="No">
+        </form>`
       );
-      React.render(sandbox, document.body);
     });
 
     afterEach(() => {
       $.ajax.restore();
-      React.unmountComponentAtNode(document.body);
       $(document).off('vote');
     });
 
@@ -34,7 +30,7 @@ describe('ajaxvote', () => {
         expect(data.url).to.equal('/vote');
         done();
       });
-      $('input[name="helpful"]').click();
+      $('input[name="helpful"]').trigger("click");
     });
 
     it('should fire an event on an unhelpful vote', done => {
@@ -47,7 +43,7 @@ describe('ajaxvote', () => {
         expect(data.url).to.equal('/vote');
         done();
       });
-      $('input[name="not-helpful"]').click();
+      $('input[name="not-helpful"]').trigger('click');
     });
 
     it('should include the right data in the request', done => {
@@ -60,7 +56,7 @@ describe('ajaxvote', () => {
         expect($.ajax.firstCall.args[0].data.helpful).to.equal('Yes');
         done();
       });
-      $('input[name="helpful"]').click();
+      $('input[name="helpful"]').trigger('click');
     });
 
     it('should update the UI with the response', done => {
@@ -72,7 +68,7 @@ describe('ajaxvote', () => {
         expect($('.ajax-vote-box').text()).to.equal('Thanks for the vote!');
         done();
       });
-      $('input[name="helpful"]').click();
+      $('input[name="helpful"]').trigger('click');
     });
 
   });

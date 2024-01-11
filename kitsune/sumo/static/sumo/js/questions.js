@@ -185,15 +185,15 @@ function initHaveThisProblemTooAjax() {
     initAjaxForm($(this), 'form', '#vote-thanks');
   });
 
-  $container.find('input').click(function() {
+  $container.find('input').on("click", function() {
     $(this).attr('disabled', 'disabled');
   });
 
   // closing or cancelling the kbox on any of the forms should remove
   // all of them
-  $container.delegate('.kbox-close, .kbox-cancel', 'click', function(ev) {
+  $container.on('click', '.kbox-close, .kbox-cancel', function(ev) {
     ev.preventDefault();
-    $container.unbind().remove();
+    $container.off().remove();
   });
 }
 
@@ -223,7 +223,7 @@ function initHelpfulVote() {
 
 // Helper
 function initAjaxForm($container, formSelector, boxSelector, onKboxClose) {
-  $container.delegate(formSelector, 'submit', function(ev) {
+  $container.on('submit', formSelector, function(ev) {
     ev.preventDefault();
     var $form = $(this);
     var url = $form.attr('action');
@@ -269,7 +269,7 @@ function initAjaxForm($container, formSelector, boxSelector, onKboxClose) {
 }
 
 function initTagFilterToggle() {
-  $('#toggle-tag-filter').click(function(e) {
+  $('#toggle-tag-filter').on("click", function(e) {
     e.preventDefault();
     $('#tag-filter').slideToggle('fast');  // CSS3: Y U NO TRANSITION TO `height: auto;`?
     $(this).toggleClass('off');
@@ -284,7 +284,7 @@ export function linkCrashIds(container) {
     return;
   }
   var crashIDRegex = new RegExp('(bp-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', 'g');
-  var crashStatsBase = 'https://crash-stats.mozilla.com/report/index/';
+  var crashStatsBase = 'https://crash-stats.mozilla.org/report/index/';
   var helpingWithCrashesArticle = '/kb/helping-crashes';
   var crashReportContainer =
   "<span class='crash-report'>" +
@@ -306,7 +306,7 @@ function initCrashIdLinking() {
 }
 
 function initReplyToAnswer() {
-  $('a.quoted-reply').click(function() {
+  $('a.quoted-reply').on("click", function() {
     var contentId = $(this).data('content-id'),
       $content = $('#' + contentId),
       text = $content.find('.content-raw').text(),
@@ -325,4 +325,4 @@ function initReplyToAnswer() {
   });
 }
 
-$(document).ready(init);
+$(init);

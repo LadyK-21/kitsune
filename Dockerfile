@@ -1,7 +1,7 @@
 #######################
 # Common dependencies #
 #######################
-FROM python:3.10-bullseye AS base
+FROM python:3.11-bookworm AS base
 
 WORKDIR /app
 EXPOSE 8000
@@ -10,31 +10,31 @@ ENV LANG=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/venv/bin:$PATH" \
-    POETRY_VERSION=1.1.12 \
-    PIP_VERSION=21.3.1
+    POETRY_VERSION=1.6.1 \
+    PIP_VERSION=23.2.1
 
-RUN useradd -d /app -M --uid 1000 --shell /usr/sbin/nologin kitsune
+RUN useradd -d /app -M --uid 1000 --shell /bin/bash kitsune
 
 RUN set -xe \
     && apt-get update && apt-get install apt-transport-https \
-    && curl -sL https://deb.nodesource.com/setup_lts.x | bash - \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
     gettext build-essential \
     libxml2-dev libxslt1-dev zlib1g-dev git \
     libjpeg-dev libffi-dev libssl-dev libxslt1.1 \
-    libmariadb3 mariadb-client \
-    optipng nodejs zip \
+    optipng postgresql zip \
     # python
     && python -m venv /venv \
-    && pip install --upgrade pip==${PIP_VERSION} \  
-    && pip install --upgrade poetry==${POETRY_VERSION} \ 
+    && pip install --upgrade pip==${PIP_VERSION} \
+    && pip install --upgrade poetry==${POETRY_VERSION} \
     && poetry config virtualenvs.create false \
     # clean up
     && rm -rf /var/lib/apt/lists/*
 
+COPY ./scripts/install_nodejs.sh ./
 COPY pyproject.toml poetry.lock ./
-RUN poetry install 
+RUN ./install_nodejs.sh && rm ./install_nodejs.sh
+RUN poetry install
 
 #########################
 # Frontend dependencies #
@@ -55,7 +55,9 @@ RUN cp .env-build .env && \
 FROM base-frontend AS test
 
 RUN cp .env-test .env && \
+    ./scripts/l10n-fetch-lint-compile.sh && \
     ./manage.py compilejsi18n && \
+    npm run webpack:build:pre-render && \
     ./manage.py collectstatic --noinput
 
 
@@ -69,6 +71,7 @@ RUN ./scripts/l10n-fetch-lint-compile.sh && \
     ./manage.py compilejsi18n && \
     # minify jsi18n files:
     find jsi18n/ -name "*.js" -exec sh -c 'npx terser "$1" -o "${1%.js}-min.js"' sh {} \; && \
+    npm run webpack:build:pre-render && \
     ./manage.py collectstatic --noinput
 RUN poetry install --no-dev
 
@@ -76,7 +79,7 @@ RUN poetry install --no-dev
 ##########################
 # Clean production image #
 ##########################
-FROM python:3.10-slim-bullseye AS prod
+FROM python:3.11-slim-bookworm AS prod
 
 WORKDIR /app
 
@@ -85,7 +88,7 @@ EXPOSE 8000
 ENV PATH="/venv/bin:$PATH" \
     LANG=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 
+    PYTHONUNBUFFERED=1
 
 RUN groupadd --gid 1000 kitsune && useradd -g kitsune --uid 1000 --shell /usr/sbin/nologin kitsune
 
@@ -100,8 +103,7 @@ COPY --chown=kitsune:kitsune . .
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
-    libmariadb3 optipng mariadb-client \
-    libxslt1.1 && \
+    libxslt1.1 optipng postgresql && \
     rm -rf /var/lib/apt/lists/*
 
 RUN mkdir /app/media && chown kitsune:kitsune /app/media

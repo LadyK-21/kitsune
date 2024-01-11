@@ -1,15 +1,14 @@
 from django.conf import settings
-from django.contrib.contenttypes.models import ContentType
+from guardian.shortcuts import assign_perm
 
-from kitsune.access.tests import PermissionFactory
 from kitsune.forums.models import Post
-from kitsune.forums.tests import ForumFactory, ForumTestCase, PostFactory, ThreadFactory
+from kitsune.forums.tests import ForumFactory, PostFactory, ThreadFactory
 from kitsune.sumo.tests import SumoPyQuery as pq
-from kitsune.sumo.tests import get, post
+from kitsune.sumo.tests import TestCase, get, post
 from kitsune.users.tests import GroupFactory, UserFactory
 
 
-class PostsTemplateTests(ForumTestCase):
+class PostsTemplateTests(TestCase):
     def test_empty_reply_errors(self):
         """Posting an empty reply shows errors."""
         u = UserFactory()
@@ -103,18 +102,11 @@ class PostsTemplateTests(ForumTestCase):
         t = p.thread
         f = t.forum
 
-        # Create the moderator group, give it the edit permission
-        # and add a moderator.
-        moderator_group = GroupFactory()
-        ct = ContentType.objects.get_for_model(f)
-        PermissionFactory(
-            codename="forums_forum.post_edit_forum",
-            content_type=ct,
-            object_id=f.id,
-            group=moderator_group,
-        )
+        # Create a moderator group, and give the group the edit permission.
         moderator = UserFactory()
+        moderator_group = GroupFactory()
         moderator_group.user_set.add(moderator)
+        assign_perm("forums.edit_forum_thread_post", moderator_group, f)
 
         self.client.login(username=moderator.username, password="testpass")
 
@@ -181,14 +173,9 @@ class PostsTemplateTests(ForumTestCase):
 
     def test_restricted_hide_reply(self):
         """Reply fields don't show if user has no permission to post."""
-        t = ThreadFactory()
-        f = t.forum
-        ct = ContentType.objects.get_for_model(f)
-        # If the forum has the permission and the user isn't assigned said
-        # permission, then they can't post.
-        PermissionFactory(codename="forums_forum.post_in_forum", content_type=ct, object_id=f.id)
+        f = ForumFactory(restrict_posting=True)
+        t = ThreadFactory(forum=f)
         u = UserFactory()
-
         self.client.login(username=u.username, password="testpass")
         response = get(self.client, "forums.posts", args=[f.slug, t.pk])
         self.assertNotContains(response, "thread-reply")
@@ -218,6 +205,21 @@ class PostsTemplateTests(ForumTestCase):
         self.assertEqual(200, response.status_code)
         assert b"2 Replies" in response.content
 
+    def test_num_posts(self):
+        """Verify the number of posts in all threads for a given post's author."""
+        t = ThreadFactory()
+
+        response = get(self.client, "forums.posts", args=[t.forum.slug, t.id])
+        self.assertEqual(200, response.status_code)
+        self.assertIn(b"1 post", response.content)
+
+        ThreadFactory(creator=t.creator)
+        ThreadFactory(creator=t.creator)
+
+        response = get(self.client, "forums.posts", args=[t.forum.slug, t.id])
+        self.assertEqual(200, response.status_code)
+        self.assertIn(b"3 posts", response.content)
+
     def test_youtube_in_post(self):
         """Verify youtube video embedding."""
         u = UserFactory()
@@ -235,7 +237,7 @@ class PostsTemplateTests(ForumTestCase):
         assert doc("iframe")[0].attrib["src"].startswith("//www.youtube.com/embed/oHg5SJYRHA0")
 
 
-class ThreadsTemplateTests(ForumTestCase):
+class ThreadsTemplateTests(TestCase):
     def test_last_thread_post_link_has_post_id(self):
         """Make sure the last post url links to the last post (#post-<id>)."""
         t = ThreadFactory()
@@ -353,19 +355,14 @@ class ThreadsTemplateTests(ForumTestCase):
 
     def test_restricted_hide_new_thread(self):
         """'Post new thread' doesn't show if user has no permission to post."""
-        f = ForumFactory()
-        ct = ContentType.objects.get_for_model(f)
-        # If the forum has the permission and the user isn't assigned said
-        # permission, then they can't post.
-        PermissionFactory(codename="forums_forum.post_in_forum", content_type=ct, object_id=f.id)
+        f = ForumFactory(restrict_posting=True)
         u = UserFactory()
-
         self.client.login(username=u.username, password="testpass")
         response = get(self.client, "forums.threads", args=[f.slug])
         self.assertNotContains(response, "Post a new thread")
 
 
-class ForumsTemplateTests(ForumTestCase):
+class ForumsTemplateTests(TestCase):
     def test_last_post_link_has_post_id(self):
         """Make sure the last post url links to the last post (#post-<id>)."""
         p = PostFactory()
@@ -378,15 +375,7 @@ class ForumsTemplateTests(ForumTestCase):
 
     def test_restricted_is_invisible(self):
         """Forums with restricted view_in permission shouldn't show up."""
-        restricted_forum = ForumFactory()
-        # Make it restricted.
-        ct = ContentType.objects.get_for_model(restricted_forum)
-        PermissionFactory(
-            codename="forums_forum.view_in_forum",
-            content_type=ct,
-            object_id=restricted_forum.id,
-        )
-
+        restricted_forum = ForumFactory(restrict_viewing=True)
         response = get(self.client, "forums.forums")
         self.assertNotContains(response, restricted_forum.slug)
 
@@ -438,8 +427,24 @@ class ForumsTemplateTests(ForumTestCase):
         self.assertEqual(1, len(doc(".forums tr")))
         self.assertEqual(forum2.name, doc(".forums tr a").text())
 
+    def test_thread_counts(self):
+        """Verify the thread counts."""
+        forum1 = ThreadFactory().forum
+        forum2 = ThreadFactory().forum
+        ThreadFactory(forum=forum2)
+        forum3 = ThreadFactory().forum
+        ThreadFactory(forum=forum3)
+        ThreadFactory(forum=forum3)
 
-class NewThreadTemplateTests(ForumTestCase):
+        response = get(self.client, "forums.forums")
+        doc = pq(response.content)
+        forum_names = doc("h5.sumo-card-heading a").text().split()
+        self.assertEqual(forum_names, [forum1.name, forum2.name, forum3.name])
+        forum_thread_counts = doc("td.threads").text().split()
+        self.assertEqual(forum_thread_counts, ["1", "2", "3"])
+
+
+class NewThreadTemplateTests(TestCase):
     def test_preview(self):
         """Preview the thread post."""
         f = ForumFactory()

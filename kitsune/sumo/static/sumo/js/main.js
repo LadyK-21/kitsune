@@ -111,10 +111,10 @@ $.ajaxSetup({
   }
 });
 
-$(document).ready(function() {
+$(function() {
   layoutTweaks();
   /* Focus form field when clicking on error message. */
-  $('#content ul.errorlist a').click(function () {
+  $('#content ul.errorlist a').on("click", function () {
     $($(this).attr('href')).focus();
     return false;
   });
@@ -148,8 +148,8 @@ window.addEventListener('popstate', function() {
   * Initialize some selects so that they auto-submit on change.
   */
 function initAutoSubmitSelects() {
-  $('select.autosubmit').change(function() {
-    $(this).closest('form').submit();
+  $('select.autosubmit').on('change keyup', function() {
+    $(this).closest('form').trigger('submit');
   });
 }
 
@@ -161,7 +161,7 @@ function initAutoSubmitSelects() {
   * from being submitted and we depend on those in some views.
   */
 function disableFormsOnSubmit() {
-  $('form').submit(function(ev) {
+  $('form').on("submit", function(ev) {
     var $this = $(this);
     if ($this.attr('method').toLowerCase() === 'post') {
       if ($this.data('disabled')) {
@@ -176,11 +176,11 @@ function disableFormsOnSubmit() {
 
       $this.ajaxComplete(function() {
         enableForm();
-        $this.unbind('ajaxComplete');
+        $this.off('ajaxComplete');
       });
 
       // Re-enable the form when users leave the page in case they come back.
-      $(window).unload(enableForm);
+      $(window).on('unload', enableForm);
       // Re-enable the form after 5 seconds in case something else went wrong.
       setTimeout(enableForm, 5000);
     }

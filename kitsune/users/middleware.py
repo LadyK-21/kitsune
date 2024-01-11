@@ -14,22 +14,19 @@ class LogoutDeactivatedUsersMiddleware(MiddlewareMixin):
     """
 
     def process_request(self, request):
-
         user = request.user
 
         if user.is_authenticated and not user.is_active:
-
             logout(request)
             return HttpResponseRedirect(reverse("home"))
 
 
 class LogoutInvalidatedSessionsMiddleware(MiddlewareMixin):
     """Logs out any sessions started before a user changed their
-    Firefox Accounts password.
+    Mozilla account password.
     """
 
     def process_request(self, request):
-
         user = request.user
 
         if user.is_authenticated:

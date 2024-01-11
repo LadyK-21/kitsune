@@ -10,16 +10,14 @@ from django.contrib.auth.models import User
 from django.core import mail
 from pyquery import PyQuery as pq
 from taggit.models import Tag
-from tidings.models import Watch
 
 from kitsune.products.tests import ProductFactory, TopicFactory
 from kitsune.questions.events import QuestionReplyEvent, QuestionSolvedEvent
 from kitsune.questions.models import Answer, Question, QuestionLocale, VoteMetadata
-from kitsune.questions.tests import AnswerFactory, QuestionFactory, TestCaseBase, tags_eq
+from kitsune.questions.tests import AnswerFactory, QuestionFactory, tags_eq
 from kitsune.questions.views import NO_TAG, UNAPPROVED_TAG
 from kitsune.sumo.templatetags.jinja_helpers import urlparams
 from kitsune.sumo.tests import (
-    LocalizingClient,
     TestCase,
     attrs_eq,
     emailmessage_raise_smtp,
@@ -28,11 +26,12 @@ from kitsune.sumo.tests import (
 )
 from kitsune.sumo.urlresolvers import reverse
 from kitsune.tags.tests import TagFactory
+from kitsune.tidings.models import Watch
 from kitsune.upload.models import ImageAttachment
 from kitsune.users.tests import UserFactory, add_permission
 
 
-class AnswersTemplateTestCase(TestCaseBase):
+class AnswersTemplateTestCase(TestCase):
     """Test the Answers template."""
 
     def setUp(self):
@@ -816,7 +815,7 @@ class AnswersTemplateTestCase(TestCaseBase):
         self.assertEqual(0, len(doc("meta[name=robots]")))
 
 
-class TaggingViewTestsAsTagger(TestCaseBase):
+class TaggingViewTestsAsTagger(TestCase):
     """Tests for views that add and remove tags, logged in as someone who can
     add and remove but not create tags
 
@@ -838,10 +837,9 @@ class TaggingViewTestsAsTagger(TestCaseBase):
     def test_add_tag_get_method(self):
         """Assert GETting the add_tag view redirects to the answers page."""
         response = self.client.get(_add_tag_url(self.question.id))
-        url = "%s" % reverse(
+        url = reverse(
             "questions.details",
             kwargs={"question_id": self.question.id},
-            force_locale=True,
         )
         self.assertRedirects(response, url)
 
@@ -928,9 +926,7 @@ class TaggingViewTestsAsTagger(TestCaseBase):
         self._assert_redirects_to_question(response, self.question.id)
 
     def _assert_redirects_to_question(self, response, question_id):
-        url = "%s" % reverse(
-            "questions.details", kwargs={"question_id": question_id}, force_locale=True
-        )
+        url = reverse("questions.details", kwargs={"question_id": question_id})
         self.assertRedirects(response, url)
 
     # remove_tag_async view:
@@ -967,7 +963,7 @@ class TaggingViewTestsAsTagger(TestCaseBase):
         self.assertContains(response, NO_TAG, status_code=400)
 
 
-class TaggingViewTestsAsAdmin(TestCaseBase):
+class TaggingViewTestsAsAdmin(TestCase):
     """Tests for views that create new tags, logged in as someone who can"""
 
     def setUp(self):
@@ -1036,7 +1032,7 @@ def _remove_async_tag_url(question_id):
     return reverse("questions.remove_tag_async", kwargs={"question_id": question_id})
 
 
-class QuestionsTemplateTestCase(TestCaseBase):
+class QuestionsTemplateTestCase(TestCase):
     def test_tagged(self):
         u = UserFactory()
         add_permission(u, Question, "tag_question")
@@ -1221,8 +1217,6 @@ class QuestionsTemplateTestCase(TestCaseBase):
 
 
 class QuestionsTemplateTestCaseNoFixtures(TestCase):
-    client_class = LocalizingClient
-
     def test_locked_questions_dont_appear(self):
         """Locked questions are not listed on the no-replies list."""
         QuestionFactory()
@@ -1236,7 +1230,7 @@ class QuestionsTemplateTestCaseNoFixtures(TestCase):
         self.assertEqual(2, len(doc(".forum--question-item")))
 
 
-class QuestionEditingTests(TestCaseBase):
+class QuestionEditingTests(TestCase):
     """Tests for the question-editing view and templates"""
 
     def setUp(self):
@@ -1289,7 +1283,7 @@ class QuestionEditingTests(TestCaseBase):
         )
 
         # Make sure the form redirects and thus appears to succeed:
-        url = "%s" % reverse("questions.details", kwargs={"question_id": q.id}, force_locale=True)
+        url = reverse("questions.details", kwargs={"question_id": q.id})
         self.assertRedirects(response, url)
 
         # Make sure the static fields, the metadata, and the updated_by field
@@ -1300,7 +1294,7 @@ class QuestionEditingTests(TestCaseBase):
         self.assertEqual(q.updated_by, self.user)
 
 
-class AAQTemplateTestCase(TestCaseBase):
+class AAQTemplateTestCase(TestCase):
     """Test the AAQ template."""
 
     data = {
@@ -1345,7 +1339,8 @@ class AAQTemplateTestCase(TestCaseBase):
     def _post_new_question(self, locale=None):
         """Post a new question and return the response."""
         product = ProductFactory(title="Firefox", slug="firefox")
-        for loc in QuestionLocale.objects.all():
+        for loc_code in (settings.LANGUAGE_CODE, "pt-BR"):
+            loc, _ = QuestionLocale.objects.get_or_create(locale=loc_code)
             product.questions_locales.add(loc)
         TopicFactory(slug="fix-problems", product=product)
         extra = {}
@@ -1402,7 +1397,7 @@ class AAQTemplateTestCase(TestCaseBase):
     def test_localized_creation(self):
         response = self._post_new_question(locale="pt-BR")
         self.assertEqual(200, response.status_code)
-        assert "Done!" in pq(response.content)("ul.user-messages li").text()
+        assert "Pronto!" in pq(response.content)("ul.user-messages li").text()
 
         # Verify question is in db now
         question = Question.objects.filter(title="A test question")[0]
@@ -1420,14 +1415,14 @@ class AAQTemplateTestCase(TestCaseBase):
         self.assertEqual(302, response.status_code)
 
 
-class ProductForumTemplateTestCase(TestCaseBase):
+class ProductForumTemplateTestCase(TestCase):
     def test_product_forum_listing(self):
         firefox = ProductFactory(title="Firefox", slug="firefox")
         android = ProductFactory(title="Firefox for Android", slug="mobile")
         fxos = ProductFactory(title="Firefox OS", slug="firefox-os")
         openbadges = ProductFactory(title="Open Badges", slug="open-badges")
 
-        lcl = QuestionLocale.objects.get(locale=settings.LANGUAGE_CODE)
+        lcl, _ = QuestionLocale.objects.get_or_create(locale=settings.LANGUAGE_CODE)
         firefox.questions_locales.add(lcl)
         android.questions_locales.add(lcl)
         fxos.questions_locales.add(lcl)
@@ -1435,7 +1430,7 @@ class ProductForumTemplateTestCase(TestCaseBase):
         response = self.client.get(reverse("questions.home"))
         self.assertEqual(200, response.status_code)
         doc = pq(response.content)
-        self.assertEqual(4, len(doc(".product-list .product")))
+        self.assertEqual(3, len(doc(".product-list .product")))
         product_list_html = doc(".product-list").html()
         assert firefox.title in product_list_html
         assert android.title in product_list_html

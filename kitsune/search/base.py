@@ -2,13 +2,13 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from dataclasses import field as dfield
 from datetime import datetime
-from typing import Union, overload
+from typing import Self, Union, overload
 
 from django.conf import settings
 from django.core.paginator import EmptyPage, PageNotAnInteger
 from django.core.paginator import Paginator as DjPaginator
 from django.utils import timezone
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from elasticsearch.exceptions import NotFoundError, RequestError
 from elasticsearch_dsl import Document as DSLDocument
 from elasticsearch_dsl import InnerDoc, MetaField
@@ -18,17 +18,22 @@ from elasticsearch_dsl.utils import AttrDict
 from pyparsing import ParseException
 
 from kitsune.search.config import (
-    DEFAULT_ES7_CONNECTION,
-    DEFAULT_ES7_REFRESH_INTERVAL,
+    DEFAULT_ES_CONNECTION,
+    DEFAULT_ES_REFRESH_INTERVAL,
     UPDATE_RETRY_ON_CONFLICT,
 )
-from kitsune.search.es7_utils import es7_client
+from kitsune.search.es_utils import es_client
 from kitsune.search.parser import Parser
 from kitsune.search.parser.tokens import TermToken
 
 
 class SumoDocument(DSLDocument):
     """Base class with common methods for all the different documents."""
+
+    # Controls if a document should be indexed or updated in ES.
+    #   True: An update action will be performed in ES.
+    #   False: An index action will be performed in ES.
+    update_document = False
 
     indexed_on = field.Date()
 
@@ -40,7 +45,7 @@ class SumoDocument(DSLDocument):
         """Automatically set up each subclass' Index attribute."""
         super().__init_subclass__(**kwargs)
 
-        cls.Index.using = DEFAULT_ES7_CONNECTION
+        cls.Index.using = DEFAULT_ES_CONNECTION
 
         # this is here to ensure subclasses of subclasses of SumoDocument (e.g. AnswerDocument)
         # use the same name in their index as their parent class (e.g. QuestionDocument) since
@@ -55,7 +60,7 @@ class SumoDocument(DSLDocument):
         cls.Index.read_alias = f"{cls.Index.base_name}_read"
         cls.Index.write_alias = f"{cls.Index.base_name}_write"
         # Bump the refresh interval to 1 minute
-        cls.Index.settings = {"refresh_interval": DEFAULT_ES7_REFRESH_INTERVAL}
+        cls.Index.settings = {"refresh_interval": DEFAULT_ES_REFRESH_INTERVAL}
 
         # this is the attribute elastic-dsl actually uses to determine which index
         # to query. we override the .search() method to get that to use the read
@@ -88,7 +93,7 @@ class SumoDocument(DSLDocument):
 
     @classmethod
     def _update_alias(cls, alias, new_index):
-        client = es7_client()
+        client = es_client()
         old_index = cls.alias_points_at(alias)
         if not old_index:
             client.indices.put_alias(new_index, alias)
@@ -106,7 +111,7 @@ class SumoDocument(DSLDocument):
     def alias_points_at(cls, alias):
         """Returns the index `alias` points at."""
         try:
-            aliased_indices = list(es7_client().indices.get_alias(name=alias))
+            aliased_indices = list(es_client().indices.get_alias(name=alias))
         except NotFoundError:
             aliased_indices = []
 
@@ -116,16 +121,6 @@ class SumoDocument(DSLDocument):
             )
 
         return aliased_indices[0] if aliased_indices else None
-
-    @classmethod
-    @property
-    def update_document(cls):
-        """Controls if a document should be indexed or updated in ES.
-
-        True: An update action will be performed in ES.
-        False: An index action will be performed in ES.
-        """
-        return False
 
     @classmethod
     def prepare(cls, instance, parent_id=None, **kwargs):
@@ -147,10 +142,9 @@ class SumoDocument(DSLDocument):
         # not suitable for indexing based on criteria defined on each said method
         if not hasattr(instance, "es_discard_doc"):
             for f in fields:
-
                 # This will allow child classes to have their own methods
                 # in the form of prepare_field
-                prepare_method = getattr(obj, "prepare_{}".format(f), None)
+                prepare_method = getattr(obj, f"prepare_{f}", None)
                 value = obj.get_field_value(f, instance, prepare_method)
 
                 # Assign values to each field.
@@ -172,9 +166,7 @@ class SumoDocument(DSLDocument):
                         and isinstance(value, datetime)
                         and timezone.is_naive(value)
                     ):
-                        # set is_dst=False to avoid errors when an ambiguous time is sent:
-                        # https://docs.djangoproject.com/en/2.2/ref/utils/#django.utils.timezone.make_aware
-                        value = timezone.make_aware(value, is_dst=False).astimezone(timezone.utc)
+                        value = timezone.make_aware(value).astimezone(timezone.utc)
 
                     if not parent_id:
                         setattr(obj, f, value)
@@ -307,7 +299,7 @@ class SumoSearchInterface(ABC):
         ...
 
     @abstractmethod
-    def run(self, **kwargs):
+    def run(self, *args, **kwargs) -> Self:
         """Perform search, placing the results in `self.results`, and the total
         number of results (across all pages) in `self.total`. Chainable."""
         ...
@@ -372,12 +364,12 @@ class SumoSearch(SumoSearchInterface):
             }
         )
 
-    def run(self, key: Union[int, slice] = slice(0, settings.SEARCH_RESULTS_PER_PAGE)):
+    def run(self, key: Union[int, slice] = slice(0, settings.SEARCH_RESULTS_PER_PAGE)) -> Self:
         """Perform search, placing the results in `self.results`, and the total
         number of results (across all pages) in `self.total`. Chainable."""
 
-        search = DSLSearch(using=es7_client(), index=self.get_index()).params(
-            **settings.ES7_SEARCH_PARAMS
+        search = DSLSearch(using=es_client(), index=self.get_index()).params(
+            **settings.ES_SEARCH_PARAMS
         )
 
         # add the search class' filter
@@ -401,7 +393,7 @@ class SumoSearch(SumoSearchInterface):
         self.hits = result.hits
         self.last_key = key
 
-        self.total = self.hits.total.value
+        self.total = self.hits.total.value  # type: ignore
         self.results = [self.make_result(hit) for hit in self.hits]
 
         return self

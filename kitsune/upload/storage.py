@@ -4,12 +4,18 @@ import os
 import time
 
 from django.conf import settings
-from django.core.files.storage import FileSystemStorage
+from django.core.files.storage import FileSystemStorage, Storage
 
+from storages.backends.gcloud import GoogleCloudStorage
 from storages.backends.s3boto3 import S3Boto3Storage
 
+DjangoStorage: Storage = FileSystemStorage
 
-DjangoStorage = S3Boto3Storage if settings.AWS_ACCESS_KEY_ID else FileSystemStorage
+if settings.GS_BUCKET_NAME:
+    DjangoStorage = GoogleCloudStorage
+
+elif settings.AWS_ACCESS_KEY_ID:
+    DjangoStorage = S3Boto3Storage
 
 
 class RenameFileStorage(DjangoStorage):

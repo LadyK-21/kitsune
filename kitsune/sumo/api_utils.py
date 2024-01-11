@@ -1,18 +1,18 @@
+from zoneinfo import ZoneInfo
+
 from django import forms
-from django.conf import settings
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.auth.models import User
+from django.db.models import F
+from django.http import HttpResponse
+from django.utils import translation
 from django.utils.translation import pgettext
 
-import pytz
-from rest_framework import fields, permissions, serializers
+from rest_framework import fields, filters, permissions, serializers
 from rest_framework.authentication import SessionAuthentication, CSRFCheck
 from rest_framework.exceptions import APIException, AuthenticationFailed
-from rest_framework.filters import BaseFilterBackend
 from rest_framework.renderers import JSONRenderer as DRFJSONRenderer
 
-from kitsune.sumo.utils import uselocale
-from kitsune.sumo.urlresolvers import get_best_language
 from kitsune.users.models import Profile
 
 
@@ -40,9 +40,7 @@ class LocaleNegotiationMixin(object):
     """A mixin for CBV to select a locale based on Accept-Language headers."""
 
     def get_locale(self):
-        accept_language = self.request.META.get("HTTP_ACCEPT_LANGUAGE", "")
-        lang = get_best_language(accept_language)
-        return lang or settings.WIKI_DEFAULT_LANGUAGE
+        return translation.get_language_from_request(self.request)
 
     def get_serializer_context(self):
         context = super(LocaleNegotiationMixin, self).get_serializer_context()
@@ -86,7 +84,7 @@ class LocalizedCharField(fields.CharField):
 
         if locale is None:
             return value
-        with uselocale(locale):
+        with translation.override(locale):
             return pgettext(self.l10n_context, value)
 
 
@@ -151,7 +149,7 @@ class DateTimeUTCField(fields.DateTimeField):
     """
 
     def default_timezone(self):
-        return pytz.utc
+        return ZoneInfo("UTC")
 
 
 class _IDSerializer(serializers.Serializer):
@@ -186,7 +184,7 @@ class GenericRelatedField(fields.ReadOnlyField):
         return data
 
 
-class InequalityFilterBackend(BaseFilterBackend):
+class InequalityFilterBackend(filters.BaseFilterBackend):
     """A filter backend that allows for field__gt style filtering."""
 
     def filter_queryset(self, request, queryset, view):
@@ -315,7 +313,11 @@ class InactiveSessionAuthentication(SessionAuthentication):
         """
         Enforce CSRF validation for session based authentication.
         """
-        reason = CSRFCheck().process_view(request, None, (), {})
+
+        def get_response(request):
+            return HttpResponse()
+
+        reason = CSRFCheck(get_response).process_view(request, None, (), {})
         if reason:
             # CSRF failed, bail with explicit error message
             raise AuthenticationFailed("CSRF Failed: %s" % reason)
@@ -348,3 +350,20 @@ class JSONRenderer(DRFJSONRenderer):
         # JSON spec: http://json.org/
 
         return json.replace(b"</", b"<\\/")
+
+
+class OrderingFilter(filters.OrderingFilter):
+    """
+    Sub-class of rest_framework.filters.OrderingFilter that simply ensures that
+    any null values in fields requested in descending order are sorted last.
+    """
+
+    def get_ordering(self, request, queryset, view):
+        """
+        Replaces any ordering fields requested in descending order with an F()
+        expression that ensures any null values are sorted last.
+        """
+        return [
+            F(field[1:]).desc(nulls_last=True) if field.startswith("-") else field
+            for field in super().get_ordering(request, queryset, view)
+        ]

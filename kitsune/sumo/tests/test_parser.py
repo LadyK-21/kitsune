@@ -1,4 +1,5 @@
 from functools import partial
+from unittest.mock import patch
 
 from django.conf import settings
 from pyquery import PyQuery as pq
@@ -218,14 +219,41 @@ class TestWikiParser(TestCase):
         """Verify youtube embeds."""
         urls = [
             "http://www.youtube.com/watch?v=oHg5SJYRHA0",
-            "https://youtube.com/watch?v=oHg5SJYRHA0"
-            "http://youtu.be/oHg5SJYRHA0"
+            "https://youtube.com/watch?v=oHg5SJYRHA0",
+            "http://youtu.be/oHg5SJYRHA0",
             "https://youtu.be/oHg5SJYRHA0",
         ]
 
         for url in urls:
-            doc = pq(self.p.parse("[[V:%s]]" % url))
-            assert doc("iframe")[0].attrib["src"].startswith("//www.youtube.com/embed/oHg5SJYRHA0")
+            with self.subTest(url):
+                doc = pq(self.p.parse("[[V:%s]]" % url))
+                assert (
+                    doc("iframe")[0]
+                    .attrib["src"]
+                    .startswith("//www.youtube.com/embed/oHg5SJYRHA0")
+                )
+
+    def test_ui_component_device_migration_wizard(self):
+        """Verify that the UI component hook for the device-migration wizard works."""
+        dmw = '<input type="text" id="x" name="x">'
+        content_template = "<p>before</p>{}<p>after</p>"
+        with patch("kitsune.sumo.parser.generate_ui_component_embed", return_value=dmw):
+            result = self.p.parse(content_template.format("[[UI:device_migration_wizard]]"))
+            self.assertEqual(result, content_template.format(dmw))
+
+    def test_ui_component_details_pair(self):
+        """Verify that the UI component hook for the details pair works."""
+        result = self.p.parse("[[UI:details_start]][[UI:details_end]]")
+        self.assertIn('<section class="mzp-c-details"></section>', result)
+
+    def test_invalid_ui_component(self):
+        """Verify error message shown for invalid UI component requests."""
+        content_template = "<p>before</p>{}<p>after</p>"
+        result = self.p.parse(content_template.format("[[UI:undefined]]"))
+        self.assertEqual(
+            result,
+            content_template.format('The UI component "undefined" does not exist.'),
+        )
 
     def test_iframe_in_markup(self):
         """Verify iframe in wiki markup is escaped."""
@@ -505,7 +533,7 @@ class TestWikiImageTags(TestCase):
     def test_link_valign(self):
         """Link with valign."""
         img = pq_img(self.p, "[[Image:test.jpg|link=http://example.com|valign=top]]")
-        self.assertEqual("vertical-align: top;", img.attr("style"))
+        self.assertEqual("vertical-align:top;", img.attr("style"))
 
     def test_link_valign_invalid(self):
         """Link with invalid valign."""
@@ -532,19 +560,18 @@ class TestWikiImageTags(TestCase):
         unsafe_vals = (
             (
                 'an"<script>alert()</script>',
-                "an&quot;&amp;amp;lt;script&amp;amp;gt;alert()&amp;amp;lt;/script&amp;amp;gt;",
+                "an&quot;&amp;lt;script&amp;gt;alert()&amp;lt;/script&amp;gt;",
             ),
             (
                 "an'<script>alert()</script>",
-                "an'&lt;script&gt;alert()&lt;/script&gt;",
+                "an'&amp;lt;script&amp;gt;alert()&amp;lt;/script&amp;gt;",
             ),
             ("single'\"double", "single'&quot;double"),
         )
         for alt_sent, alt_expected in unsafe_vals:
-            img = pq_img(self.p, "[[Image:test.jpg|alt=" + alt_sent + "]]")
-
-            is_true = str(img).startswith('<img alt="' + alt_expected + '"')
-            assert is_true, 'Expected "%s", sent "%s"' % (alt_expected, alt_sent)
+            with self.subTest(f"case: {repr(alt_sent)}"):
+                img = pq_img(self.p, f"[[Image:test.jpg|alt={alt_sent}]]")
+                self.assertIn(f'alt="{alt_expected}"', str(img))
 
     def test_width(self):
         """Image width attribute set."""

@@ -309,6 +309,25 @@ class TestQuestionViewSet(TestCase):
         self.assertEqual(res.data, {"num_votes": 1})
         self.assertEqual(Question.objects.get(id=q.id).num_votes, 1)
 
+    def test_helpful_rate_limit(self):
+        u = UserFactory()
+        self.client.force_authenticate(user=u)
+
+        # The first ten votes by this user today should be fine.
+        for _ in range(10):
+            q = QuestionFactory()
+            res = self.client.post(reverse("question-helpful", args=[q.id]))
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.data, {"num_votes": 1})
+            self.assertEqual(Question.objects.get(id=q.id).num_votes, 1)
+
+        # The eleventh vote by this user today should trigger the rate limit.
+        q = QuestionFactory()
+        res = self.client.post(reverse("question-helpful", args=[q.id]))
+        self.assertEqual(res.status_code, 429)
+        # The vote count should not have changed.
+        self.assertEqual(Question.objects.get(id=q.id).num_votes, 0)
+
     def test_helpful_double_vote(self):
         q = QuestionFactory()
         u = UserFactory()
@@ -331,18 +350,29 @@ class TestQuestionViewSet(TestCase):
     def test_ordering(self):
         q1 = QuestionFactory()
         q2 = QuestionFactory()
+        q3 = QuestionFactory()
+        AnswerFactory(question=q1)
+        AnswerFactory(question=q2)
 
         res = self.client.get(reverse("question-list"))
-        self.assertEqual(res.data["results"][0]["id"], q2.id)
-        self.assertEqual(res.data["results"][1]["id"], q1.id)
+        self.assertEqual(res.data["results"][0]["id"], q3.id)
+        self.assertEqual(res.data["results"][1]["id"], q2.id)
+        self.assertEqual(res.data["results"][2]["id"], q1.id)
 
         res = self.client.get(reverse("question-list") + "?ordering=id")
         self.assertEqual(res.data["results"][0]["id"], q1.id)
         self.assertEqual(res.data["results"][1]["id"], q2.id)
+        self.assertEqual(res.data["results"][2]["id"], q3.id)
 
-        res = self.client.get(reverse("question-list") + "?ordering=-id")
+        res = self.client.get(reverse("question-list") + "?ordering=-last_answer")
         self.assertEqual(res.data["results"][0]["id"], q2.id)
         self.assertEqual(res.data["results"][1]["id"], q1.id)
+        self.assertEqual(res.data["results"][2]["id"], q3.id)
+
+        res = self.client.get(reverse("question-list") + "?ordering=last_answer")
+        self.assertEqual(res.data["results"][0]["id"], q1.id)
+        self.assertEqual(res.data["results"][1]["id"], q2.id)
+        self.assertEqual(res.data["results"][2]["id"], q3.id)
 
     def test_filter_product_with_slug(self):
         p1 = ProductFactory()
@@ -447,6 +477,7 @@ class TestQuestionViewSet(TestCase):
 
         u = UserFactory()
         add_permission(u, Tag, "add_tag")
+        add_permission(u, Question, "tag_question")
         self.client.force_authenticate(user=u)
 
         res = self.client.post(
@@ -457,7 +488,7 @@ class TestQuestionViewSet(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(3, q.tags.count())
 
-    def test_remove_tags(self):
+    def test_remove_tags_without_perms(self):
         q = QuestionFactory()
         q.tags.add("test")
         q.tags.add("more")
@@ -465,6 +496,25 @@ class TestQuestionViewSet(TestCase):
         self.assertEqual(3, q.tags.count())
 
         u = UserFactory()
+        self.client.force_authenticate(user=u)
+
+        res = self.client.post(
+            reverse("question-remove-tags", args=[q.id]),
+            content_type="application/json",
+            data=json.dumps({"tags": ["more", "tags"]}),
+        )
+        self.assertEqual(res.status_code, 403)
+        self.assertEqual(3, q.tags.count())
+
+    def test_remove_tags_with_perms(self):
+        q = QuestionFactory()
+        q.tags.add("test")
+        q.tags.add("more")
+        q.tags.add("tags")
+        self.assertEqual(3, q.tags.count())
+
+        u = UserFactory()
+        add_permission(u, Question, "remove_tag")
         self.client.force_authenticate(user=u)
 
         res = self.client.post(
@@ -589,6 +639,25 @@ class TestAnswerViewSet(TestCase):
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.data, {"num_helpful_votes": 1, "num_unhelpful_votes": 0})
         self.assertEqual(Answer.objects.get(id=a.id).num_votes, 1)
+
+    def test_helpful_rate_limit(self):
+        u = UserFactory()
+        self.client.force_authenticate(user=u)
+
+        # The first ten votes by this user today should be fine.
+        for _ in range(10):
+            a = AnswerFactory()
+            res = self.client.post(reverse("answer-helpful", args=[a.id]))
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.data, {"num_helpful_votes": 1, "num_unhelpful_votes": 0})
+            self.assertEqual(Answer.objects.get(id=a.id).num_votes, 1)
+
+        # The eleventh vote by this user today should trigger the rate limit.
+        a = AnswerFactory()
+        res = self.client.post(reverse("answer-helpful", args=[a.id]))
+        self.assertEqual(res.status_code, 429)
+        # The vote count should not have changed.
+        self.assertEqual(Answer.objects.get(id=a.id).num_votes, 0)
 
     def test_helpful_double_vote(self):
         a = AnswerFactory()

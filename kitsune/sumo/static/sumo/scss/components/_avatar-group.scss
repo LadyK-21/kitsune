@@ -1,5 +1,5 @@
 @use '../config' as c;
-@use '../protocol' as p;
+@use 'protocol/css/includes/lib' as p;
 
 .avatar-group {
   @include c.grid-row();
@@ -22,7 +22,7 @@
   }
 
   &--details-label {
-    width: 90px;
+    width: 170px;
     margin-right: 10px;
   }
 

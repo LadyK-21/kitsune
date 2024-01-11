@@ -60,7 +60,7 @@
       <div class="sumo-nav--dropdown-grid">
         <button class="mzp-c-menu-button-close" type="button"
           aria-controls="mzp-c-menu-panel-example">{{ _('Close Firefox menu') }}</button>
-        <div class="sumo-nav--dropdown-col">
+        <div class="sumo-nav--dropdown-thirds">
           <section class="mzp-c-menu-item mzp-has-icon sumo-nav--dropdown-item">
             <a class="mzp-c-menu-item-link" href="{{ url('questions.aaq_step1') }}">
               <svg class="mzp-c-menu-item-icon" width="24" height="24" xmlns="http://www.w3.org/2000/svg"
@@ -88,7 +88,7 @@
             </ul>
           </section>
         </div>
-        <div class="sumo-nav--dropdown-col">
+        <div class="sumo-nav--dropdown-thirds">
           <section class="mzp-c-menu-item mzp-has-icon sumo-nav--dropdown-item">
             <a class="mzp-c-menu-item-link" href="{{ url('products') }}">
               <svg class="mzp-c-menu-item-icon" width="24" height="24" xmlns="http://www.w3.org/2000/svg"
@@ -113,6 +113,28 @@
               <li><a href="{{ url('products.product', 'focus-firefox') }}">{{ _('Firefox Focus') }}</a></li>
               <li><a href="{{ url('products.product', 'mobile') }}">{{ _('Firefox for Android') }}</a></li>
               <li><a class="color-link" href="{{ url('products') }}">{{ _('Browse All Articles') }}</a></li>
+            </ul>
+          </section>
+        </div>
+        <div class="sumo-nav--dropdown-thirds">
+          <section class="mzp-c-menu-item mzp-has-icon sumo-nav--dropdown-item">
+            <a class="mzp-c-menu-item-link" href="{{ url('products.product', 'mozilla-account') }}">
+              <svg class="mzp-c-menu-item-icon" width="24" height="24" xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24">
+                <path stroke="#000" stroke-linecap="round" stroke-width="2" d="M1 19s1.5-6 7-6 7 6 7 6"/>
+                <path stroke="#000" stroke-width="2" d="M8 9a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" clip-rule="evenodd"/>
+              </svg>
+              <h4 class="mzp-c-menu-item-title">{{ _('Mozilla Account') }}</h4>
+              <p class="mzp-c-menu-item-desc">
+                {{ _('Find help for common issues and learn about the benefits a Mozilla account provides.') }}
+              </p>
+            </a>
+            <ul class="mzp-c-menu-item-list sumo-nav--sublist">
+              <li><a href="{{ url('wiki.document', 'access-mozilla-services-firefox-account' )}}">{{ _('What Is It?') }}</a></li>
+              <li><a href="{{ url('products.product', 'mozilla-account')}}">{{ _('Get Help') }}</a></li>
+              <li><a href="https://accounts.firefox.com/reset_password">{{ _('Reset Password') }}</a></li>
+              <li></li>
+              <li><a href="{{ url('wiki.document', 'switching-devices') }}">{{ _('Sync Your Data') }}</a></li>
             </ul>
           </section>
         </div>
@@ -178,7 +200,7 @@
 {% endif %}
 
 <li class="mzp-c-menu-category">
-  <a class="mzp-c-menu-title sumo-nav--link" href="{{ url('landings.get_involved') }}">{{ _('Volunteer') }}</a>
+  <a class="mzp-c-menu-title sumo-nav--link" href="{{ url('landings.contribute') }}">{{ _('Contribute') }}</a>
 </li>
 {% endmacro %}
 
@@ -200,7 +222,7 @@
 <li
   class="mzp-c-menu-category {% if user.is_authenticated %}mzp-has-drop-down mzp-js-expandable{% else %}logged-out-button-row{% endif %} {% if hide_locale_switcher %}sumo-nav--item-right{% endif %}">
   {% if user.is_authenticated %}
-  <a class="mzp-c-menu-title sumo-nav--link has-avatar hide-on-mobile" href="{{ url('users.auth') }}">
+  <a class="mzp-c-menu-title sumo-nav--link has-avatar hide-on-mobile" rel="nofollow" href="{{ url('users.auth') }}">
     <span class="sumo-nav--username">{{ display_name(user) }}</span>
     <img class="avatar" src="{{ profile_avatar(user) }}" alt="Avatar for Username">
   </a>
@@ -211,7 +233,7 @@
           aria-controls="mzp-c-menu-panel-profile">{{ _('Close Firefox menu') }}</button>
         <div class="sumo-nav--dropdown-thirds">
           <section class="mzp-c-menu-item mzp-has-icon sumo-nav--dropdown-item">
-            <a class="mzp-c-menu-item-link" href="{{ profile_url(user) }}">
+            <a class="mzp-c-menu-item-link" rel="nofollow" href="{{ profile_url(user) }}">
               <svg class="mzp-c-menu-item-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                 <g transform="translate(5 3)" stroke="#000" stroke-width="2" fill="none" fill-rule="evenodd">
                   <path d="M0 18c1-4 3.333-6 7-6s6 2 7 6" stroke-linecap="round" />
@@ -224,14 +246,14 @@
               </p>
             </a>
             <ul class="mzp-c-menu-item-list sumo-nav--sublist">
-              <li><a href="{{ url('users.edit_my_profile') }}">{{ _('Edit Profile') }}</a></li>
-              <li><a href="{{ url('users.questions', user.username) }}">{{ _('My Questions') }}</a></li>
+              <li><a rel="nofollow" href="{{ url('users.edit_my_profile') }}">{{ _('Edit Profile') }}</a></li>
+              <li><a rel="nofollow" href="{{ url('users.questions', user.username) }}">{{ _('My Questions') }}</a></li>
             </ul>
           </section>
         </div>
         <div class="sumo-nav--dropdown-thirds">
           <section class="mzp-c-menu-item mzp-has-icon sumo-nav--dropdown-item">
-            <a class="mzp-c-menu-item-link" href="{{ url('users.edit_settings') }}">
+            <a class="mzp-c-menu-item-link" rel="nofollow" href="{{ url('users.edit_settings') }}">
               <svg class="mzp-c-menu-item-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                 <g transform="translate(1 1)" stroke="#000" stroke-width="2" fill="none" fill-rule="evenodd"
                   stroke-linecap="round" stroke-linejoin="round">
@@ -277,7 +299,7 @@
     </div>
   </div>
   {% elif not request.path == url('users.auth') %}
-  <a href="{{ url('users.auth') }}" class="sumo-button secondary-button button-lg" data-event-category="navigation"
+  <a rel="nofollow" href="{{ url('users.auth') }}" class="sumo-button secondary-button button-lg" data-event-category="navigation"
     data-event-action="main navigation" data-event-label="Sign In">{{ _('Sign In/Up') }}</a>
   {% endif %}
 </li>

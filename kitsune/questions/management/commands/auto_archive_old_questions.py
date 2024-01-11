@@ -6,7 +6,7 @@ from django.core.management.base import BaseCommand
 from django.db import connection, transaction
 
 from kitsune.questions.models import Answer, Question
-from kitsune.search.es7_utils import index_objects_bulk
+from kitsune.search.es_utils import index_objects_bulk
 
 log = logging.getLogger("k.cron")
 
@@ -24,8 +24,8 @@ class Command(BaseCommand):
         days_180 = datetime.now() - timedelta(days=180)
         q_ids = list(
             Question.objects.filter(is_archived=False)
-            .filter(created__lte=days_180)
-            .values_list("id", flat=True)
+            # Use "__range" to ensure the database index is used in Postgres.
+            .filter(created__range=(datetime.min, days_180)).values_list("id", flat=True)
         )
 
         if q_ids:
@@ -33,7 +33,7 @@ class Command(BaseCommand):
 
             sql = """
                 UPDATE questions_question
-                SET is_archived = 1
+                SET is_archived = TRUE
                 WHERE id IN (%s)
                 """ % ",".join(
                 map(str, q_ids)

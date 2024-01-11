@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
-import hashlib
 
 from django.contrib.auth.models import AnonymousUser, User
-from jinja2 import Markup
+from markupsafe import Markup
 from pyquery import PyQuery as pq
 
 from kitsune.sumo.tests import TestCase
 from kitsune.users.templatetags.jinja_helpers import (
     display_name,
-    profile_avatar,
     profile_url,
     public_email,
     user_list,
@@ -22,30 +20,7 @@ class HelperTestCase(TestCase):
         self.u = UserFactory()
 
     def test_profile_url(self):
-        self.assertEqual("/user/%s" % self.u.username, profile_url(self.u))
-
-    def test_profile_avatar_default(self):
-        email_hash = hashlib.md5(self.u.email.lower().encode()).hexdigest()
-        gravatar_url = "https://secure.gravatar.com/avatar/%s?s=200" % (email_hash)
-        assert profile_avatar(self.u).startswith(gravatar_url)
-
-    def test_profile_avatar_anonymous(self):
-        email_hash = "00000000000000000000000000000000"
-        gravatar_url = "https://secure.gravatar.com/avatar/%s?s=200" % (email_hash)
-        assert profile_avatar(AnonymousUser()).startswith(gravatar_url)
-
-    def test_profile_avatar(self):
-        self.u.profile.avatar = "images/foo.png"
-        self.u.profile.save()
-        email_hash = hashlib.md5(self.u.email.lower().encode()).hexdigest()
-        gravatar_url = "https://secure.gravatar.com/avatar/%s?s=200" % (email_hash)
-        assert profile_avatar(self.u).startswith(gravatar_url)
-
-    def test_profile_avatar_unicode(self):
-        self.u.email = "rápido@example.com"
-        self.u.save()
-        gravatar_url = "https://secure.gravatar.com/"
-        assert profile_avatar(self.u).startswith(gravatar_url)
+        self.assertEqual("/en-US/user/%s/" % self.u.username, profile_url(self.u))
 
     def test_public_email(self):
         self.assertEqual(
@@ -79,5 +54,5 @@ class HelperTestCase(TestCase):
         fragment = pq(list)
         self.assertEqual(len(users), len(fragment("a")))
         a = fragment("a")[1]
-        assert a.attrib["href"].endswith(str(users[1].username))
+        assert a.attrib["href"].endswith(str(users[1].username + "/"))
         self.assertEqual(display_name(users[1]), a.text)

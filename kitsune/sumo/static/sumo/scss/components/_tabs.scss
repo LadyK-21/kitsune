@@ -11,7 +11,7 @@
 // Style guide: tabs
 
 @use '../config' as c;
-@use '../protocol' as p;
+@use 'protocol/css/includes/lib' as p;
 
 %link-styles {
   appearance: none;
@@ -28,6 +28,10 @@
     display: block;
     padding: 0 0 p.$spacing-md 0;
     margin-right: p.$spacing-md;
+  }
+
+  &:focus {
+    outline: 1px solid var(--color-link);
   }
 
   &:hover  {
@@ -112,7 +116,6 @@
     .tabs--item {
       border-top: 1px solid var(--color-border);
       background-color: var(--page-bg);
-
       span {
         padding: 0;
       }

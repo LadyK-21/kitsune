@@ -6,16 +6,25 @@ from uuid import uuid4
 from django.conf import settings
 from django.contrib.auth.models import Group, User
 from django.contrib.auth.validators import UnicodeUsernameValidator
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
+from kitsune.messages.models import InboxMessage, OutboxMessage
 from kitsune.sumo import email_utils
-from kitsune.users.models import CONTRIBUTOR_GROUP, Deactivation, Setting
+from kitsune.users.models import ContributionAreas, Deactivation, Setting
 
 log = logging.getLogger("k.users")
 
 
-def add_to_contributors(user, language_code):
-    group = Group.objects.get(name=CONTRIBUTOR_GROUP)
+def add_to_contributors(user, language_code, contribution_area=""):
+    area = contribution_area.upper()
+    if not ContributionAreas.has_member(area):
+        return
+
+    group, created = Group.objects.get_or_create(name=ContributionAreas[area].value)
+    # don't fire an email if the user is already member of the group
+    if user.groups.filter(pk=group.pk).exists():
+        return
+
     user.groups.add(group)
     user.save()
 
@@ -98,9 +107,14 @@ def anonymize_user(user):
     profile.fxa_uid = "{user_id}-{uid}".format(user_id=user.id, uid=str(uid))
     profile.save()
 
-    # Deactivate the user and change key information
+    # Change key information, clear the user's inbox/outbox, and deactivate the user.
     user.username = f"user{uid.int}"
     user.email = f"{uid.int}@example.com"
+    # Delete the InboxMessage objects received and OutboxMessage objects sent by the
+    # user. This does not affect the InboxMessage objects of the recipients of messages
+    # sent by the user.
+    InboxMessage.objects.filter(to=user).delete()
+    OutboxMessage.objects.filter(sender=user).delete()
     deactivate_user(user, user)
 
     # Remove from all groups
@@ -110,7 +124,7 @@ def anonymize_user(user):
 
 
 def get_oidc_fxa_setting(attr):
-    """Helper method to return the appropriate setting for Firefox Accounts authentication."""
+    """Helper method to return the appropriate setting for Mozilla accounts authentication."""
     FXA_CONFIGURATION = {
         "OIDC_OP_TOKEN_ENDPOINT": settings.FXA_OP_TOKEN_ENDPOINT,
         "OIDC_OP_AUTHORIZATION_ENDPOINT": settings.FXA_OP_AUTHORIZATION_ENDPOINT,

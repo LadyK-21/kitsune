@@ -1,22 +1,22 @@
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Dict
 
-# NOTE: This import is just so _fire_task gets registered with celery.
-import tidings.events  # noqa
-from celery import task
+from celery import shared_task
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.db import connection, transaction
+from django.db.models import Count, OuterRef, Subquery
+from django.db.models.functions import Coalesce, Now
 from sentry_sdk import capture_exception
 
 from kitsune.kbadge.utils import get_or_create_badge
 from kitsune.questions.config import ANSWERS_PER_PAGE
 
+
 log = logging.getLogger("k.task")
 
 
-@task(rate_limit="1/s")
+@shared_task(rate_limit="1/s")
 def update_question_votes(question_id):
     from kitsune.questions.models import Question
 
@@ -30,34 +30,35 @@ def update_question_votes(question_id):
         log.info("Question id=%s deleted before task." % question_id)
 
 
-@task(rate_limit="4/s")
-def update_question_vote_chunk(data):
-    """Update num_votes_past_week for a number of questions."""
+@shared_task(rate_limit="4/s")
+def update_question_vote_chunk(question_ids):
+    """Given a list of questions, update the "num_votes_past_week" attribute of each one."""
+    from kitsune.questions.models import Question, QuestionVote
 
-    # First we recalculate num_votes_past_week in the db.
-    log.info("Calculating past week votes for %s questions." % len(data))
+    log.info("Calculating past week votes for %s questions." % len(question_ids))
 
-    ids = ",".join(map(str, data))
-    sql = (
-        """
-        UPDATE questions_question q
-        SET num_votes_past_week = (
-            SELECT COUNT(created)
-            FROM questions_questionvote qv
-            WHERE qv.question_id = q.id
-            AND qv.created >= DATE(SUBDATE(NOW(), 7))
-        )
-        WHERE q.id IN (%s);
-        """
-        % ids
+    past_week = (datetime.now() - timedelta(days=7)).replace(
+        hour=0, minute=0, second=0, microsecond=0
     )
-    with connection.cursor() as cursor:
-        cursor.execute(sql)
-    if not transaction.get_connection().in_atomic_block:
-        transaction.commit()
+
+    Question.objects.filter(id__in=question_ids).update(
+        num_votes_past_week=Coalesce(
+            Subquery(
+                # Use "__range" to ensure the database index is used in Postgres.
+                QuestionVote.objects.filter(
+                    question_id=OuterRef("id"), created__range=(past_week, Now())
+                )
+                .order_by()
+                .values("question_id")
+                .annotate(count=Count("*"))
+                .values("count")
+            ),
+            0,
+        )
+    )
 
 
-@task(rate_limit="4/m")
+@shared_task(rate_limit="4/m")
 def update_answer_pages(question_id: int):
     from kitsune.questions.models import Question
 
@@ -79,7 +80,7 @@ def update_answer_pages(question_id: int):
         i += 1
 
 
-@task()
+@shared_task
 def maybe_award_badge(badge_template: Dict, year: int, user_id: int):
     """Award the specific badge to the user if they've earned it."""
     badge = get_or_create_badge(badge_template, year)

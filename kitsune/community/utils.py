@@ -4,19 +4,15 @@ from datetime import date, datetime, timedelta, timezone
 from django.conf import settings
 from django.contrib.auth.models import Group
 from django.core.cache import cache
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
+from django.db.models.functions import Now
 from elasticsearch_dsl import A
 
 from kitsune.products.models import Product
 from kitsune.search.documents import AnswerDocument, ProfileDocument
-from kitsune.users.models import CONTRIBUTOR_GROUP, User
+from kitsune.users.models import ContributionAreas, User
 from kitsune.users.templatetags.jinja_helpers import profile_avatar
 from kitsune.wiki.models import Revision
-
-CONTRIBUTOR_GROUPS = [
-    "Contributors",
-    CONTRIBUTOR_GROUP,
-]
 
 
 def top_contributors_questions(start=None, end=None, locale=None, product=None, count=10, page=1):
@@ -68,7 +64,7 @@ def top_contributors_questions(start=None, end=None, locale=None, product=None, 
 
     user_ids = [bucket.key for bucket in contribution_buckets]
     contributor_group_ids = list(
-        Group.objects.filter(name__in=CONTRIBUTOR_GROUPS).values_list("id", flat=True)
+        Group.objects.filter(name__in=ContributionAreas.get_groups()).values_list("id", flat=True)
     )
 
     # fetch all the users returned by the aggregation which are in the contributor groups
@@ -128,21 +124,18 @@ def top_contributors_l10n(
         if cached:
             return cached
 
-    # Get the user ids and contribution count of the top contributors.
-    revisions = Revision.objects.all()
-    if locale is None:
-        # If there is no locale specified, exclude en-US only. The rest are
-        # l10n.
-        revisions = revisions.exclude(document__locale=settings.WIKI_DEFAULT_LANGUAGE)
     if start is None:
         # By default we go back 90 days.
         start = date.today() - timedelta(days=90)
-        revisions = revisions.filter(created__gte=start)
-    if end:
-        # If no end is specified, we don't need to filter by it.
-        revisions = revisions.filter(created__lt=end)
+
+    # Get the user ids and contribution count of the top contributors.
+    revisions = Revision.objects.all()
+    revisions = revisions.filter(created__range=(start, end or Now()))
     if locale:
         revisions = revisions.filter(document__locale=locale)
+    else:
+        # If there is no locale specified, exclude en-US only. The rest are l10n.
+        revisions = revisions.exclude(document__locale=settings.WIKI_DEFAULT_LANGUAGE)
     if product:
         if isinstance(product, Product):
             product = product.slug
@@ -153,7 +146,7 @@ def top_contributors_l10n(
     users = (
         User.objects.filter(created_revisions__in=revisions, is_active=True)
         .annotate(query_count=Count("created_revisions"))
-        .order_by("-query_count")
+        .order_by(F("query_count").desc(nulls_last=True))
         .select_related("profile")
     )
     total = users.count()

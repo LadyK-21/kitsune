@@ -1,8 +1,8 @@
 import json
-import waffle
 from ast import literal_eval
 
 import requests
+import waffle
 from django.conf import settings
 from django.contrib import auth, messages
 from django.contrib.auth.models import User
@@ -17,7 +17,7 @@ from django.http import (
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.decorators import method_decorator
 from django.utils.encoding import force_bytes
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 from django.views.generic import View
@@ -34,17 +34,16 @@ from mozilla_django_oidc.views import (
     OIDCLogoutView,
 )
 from sentry_sdk import capture_exception, capture_message
-from tidings.models import Watch
 
 from kitsune import users as constants
 from kitsune.access.decorators import login_required, logout_required, permission_required
 from kitsune.kbadge.models import Award
 from kitsune.questions.utils import mark_content_as_spam, num_answers, num_questions, num_solutions
-from kitsune.sumo.decorators import ssl_required
 from kitsune.sumo.templatetags.jinja_helpers import urlparams
 from kitsune.sumo.urlresolvers import reverse
 from kitsune.sumo.utils import get_next_url, paginate, simple_paginate
-from kitsune.users.forms import ProfileForm, SettingsForm, UserForm
+from kitsune.tidings.models import Watch
+from kitsune.users.forms import ContributionAreaForm, ProfileForm, SettingsForm, UserForm
 from kitsune.users.models import SET_ID_PREFIX, AccountEvent, Deactivation, Profile
 from kitsune.users.tasks import (
     process_event_delete_user,
@@ -62,7 +61,6 @@ from kitsune.users.utils import (
 from kitsune.wiki.models import user_documents, user_num_documents, user_redirects
 
 
-@ssl_required
 @logout_required
 @require_http_methods(["GET", "POST"])
 def user_auth(request, notification=None):
@@ -78,11 +76,10 @@ def user_auth(request, notification=None):
     )
 
 
-@ssl_required
 def login(request):
     """
     This views is used as a wrapper for user_auth to login users
-    with Firefox Accounts.
+    with Mozilla accounts.
     """
     if request.method == "GET":
         url = reverse("users.auth") + "?" + request.GET.urlencode()
@@ -99,7 +96,6 @@ def login(request):
     return user_auth(request)
 
 
-@ssl_required
 @require_POST
 def logout(request):
     """Log the user out.
@@ -252,13 +248,13 @@ def edit_settings(request):
     """Edit user settings"""
     template = "users/edit_settings.html"
     if request.method == "POST":
-        form = SettingsForm(request.POST)
-        if form.is_valid():
-            form.save_for_user(request.user)
+        settings_form = SettingsForm(request.POST)
+        if settings_form.is_valid():
+            settings_form.save_for_user(request.user)
             messages.add_message(request, messages.INFO, _("Your settings have been saved."))
             return HttpResponseRedirect(reverse("users.edit_settings"))
         # Invalid form
-        return render(request, template, {"form": form})
+        return render(request, template, {"settings_form": settings_form})
 
     # Pass the current user's settings as the initial values.
     values = list(request.user.settings.values())
@@ -272,8 +268,22 @@ def edit_settings(request):
             # Attempted to convert the string value to a Python value
             # but failed so leave it a string.
             initial[val["name"]] = val["value"]
-    form = SettingsForm(initial=initial)
-    return render(request, template, {"form": form})
+    settings_form = SettingsForm(initial=initial)
+    return render(request, template, {"settings_form": settings_form})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def edit_contribution_area(request):
+    """Edit user settings"""
+    template = "users/edit_contributions.html"
+    contribution_form = ContributionAreaForm(request.POST or None, request=request)
+
+    if contribution_form.is_valid():
+        contribution_form.save()
+        messages.add_message(request, messages.INFO, _("Your preferences have been saved."))
+        return HttpResponseRedirect(reverse("users.edit_contribution_area"))
+    return render(request, template, {"contribution_form": contribution_form})
 
 
 @login_required
@@ -366,7 +376,7 @@ def make_contributor(request):
     if "return_to" in request.POST:
         return HttpResponseRedirect(request.POST["return_to"])
     else:
-        return HttpResponseRedirect(reverse("landings.get_involved"))
+        return HttpResponseRedirect(reverse("landings.contribute"))
 
 
 def become(request, username=None):
@@ -386,10 +396,10 @@ def become(request, username=None):
 class FXAAuthenticateView(OIDCAuthenticationRequestView):
     @staticmethod
     def get_settings(attr, *args):
-        """Override settings for Firefox Accounts.
+        """Override settings for Mozilla accounts.
 
         The default values for the OIDC lib are used for the SSO login in the admin
-        interface. For Firefox Accounts we need to pass different values, pointing to the
+        interface. For Mozilla accounts we need to pass different values, pointing to the
         correct endpoints and RP specific attributes.
         """
 
@@ -399,8 +409,8 @@ class FXAAuthenticateView(OIDCAuthenticationRequestView):
         return super(FXAAuthenticateView, FXAAuthenticateView).get_settings(attr, *args)
 
     def get(self, request):
-        is_contributor = request.GET.get("is_contributor") == "True"
-        request.session["is_contributor"] = is_contributor
+        if contribution_area := request.GET.get("contributor"):
+            request.session["contributor"] = contribution_area
 
         request.session["login_locale"] = getattr(request, "LANGUAGE_CODE", settings.LANGUAGE_CODE)
 
@@ -410,10 +420,10 @@ class FXAAuthenticateView(OIDCAuthenticationRequestView):
 class FXAAuthenticationCallbackView(OIDCAuthenticationCallbackView):
     @staticmethod
     def get_settings(attr, *args):
-        """Override settings for Firefox Accounts.
+        """Override settings for Mozilla accounts.
 
         The default values for the OIDC lib are used for the SSO login in the admin
-        interface. For Firefox Accounts we need to pass different values, pointing to the
+        interface. For Mozilla accounts we need to pass different values, pointing to the
         correct endpoints and RP specific attributes.
         """
 
@@ -447,7 +457,7 @@ class FXAAuthenticationCallbackView(OIDCAuthenticationCallbackView):
 class FXALogoutView(OIDCLogoutView):
     @staticmethod
     def get_settings(attr, *args):
-        """Override the logout url for Firefox Accounts."""
+        """Override the logout url for Mozilla accounts."""
 
         val = get_oidc_fxa_setting(attr)
         if val is not None:
@@ -464,7 +474,7 @@ class WebhookView(View):
 
     @staticmethod
     def get_settings(attr, *args):
-        """Override the logout url for Firefox Accounts."""
+        """Override the logout url for Mozilla accounts."""
 
         val = get_oidc_fxa_setting(attr)
         if val is not None:
@@ -575,7 +585,7 @@ class WebhookView(View):
             fxa_uid = payload.get("sub", "")
             exp = payload.get("exp")
 
-            # If the issuer is not Firefox Accounts raise a 404 error
+            # If the issuer is not Mozilla accounts raise a 404 error
             if settings.FXA_SET_ISSUER != issuer:
                 raise Http404
 

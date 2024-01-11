@@ -24,7 +24,7 @@ we can compute the edit-title URL.
     {% if current_step %}
       {{ progress_bar(current_step, product_key=current_product.key) }}
 
-      {% if current_step > 1 and not has_subscriptions %}
+      {% if current_step > 1 and not has_ticketing_support %}
         {{ scam_banner() }}
       {% endif %}
     {% endif %}
@@ -49,13 +49,13 @@ we can compute the edit-title URL.
     {% endblock %}
     <div class="sumo-l-two-col">
       <aside class="sumo-l-two-col--sidebar">
-        {% if form and not has_subscriptions %}
+        {% if form and not has_ticketing_support %}
           <div class="card has-moz-headings is-in-sidebar is-callout-bg text-center large-only">
               <img class="card--img" src="{{ webpack_static('sumo/img/Mozilla-Heads-Keith-Negley-180628__400.png') }}" alt="Illustration of community" />
               <div class="card--details">
                 <h3 class="card--title">{{ _('Our Community is here to help') }}</h3>
                 <p class="card--desc">{{ _('Kindness is at the heart of our community. Our volunteers are happy to share their time and Firefox knowledge with you.') }}</p>
-                <p><strong><a href="{{ url('landings.get_involved') }}">{{ _('Learn More') }}</a></strong></p>
+                <p><strong><a href="{{ url('landings.contribute') }}">{{ _('Learn More') }}</a></strong></p>
               </div>
           </div>
 
@@ -80,7 +80,7 @@ we can compute the edit-title URL.
             <form id="question-form" method="post">
               {% csrf_token %}
 
-              {% if not has_subscriptions %}
+              {% if not has_ticketing_support %}
                 <p class="sumo-page-intro">
                   {% trans %}
                     Be nice. Our volunteers are Mozilla users just like you,
@@ -90,12 +90,20 @@ we can compute the edit-title URL.
               {% endif %}
 
               <div class="info card shade-bg highlight mb">
+              {% if is_loginless and not user.is_authenticated %}
+                {% trans %}
+                  Can't sign in to your account and need help?
+                  You've found the right place. Complete the form below
+                  to contact our support staff.
+                {% endtrans %}
+              {% else %}
                 {% trans %}
                   Be descriptive.
                   Saying “playing video on YouTube is always choppy”
                   will help us understand the issue better than saying
                   “something is wrong” or “the app is broken”.
                 {% endtrans %}
+              {% endif %}
               </div>
 
               {% for field in form.hidden_fields() %}
@@ -105,7 +113,7 @@ we can compute the edit-title URL.
                 {% set li_class='' %}
                 {% for field in form.visible_fields() if not field.name == 'notifications' %}
 
-                  {% if not has_subscriptions %}
+                  {% if not has_ticketing_support %}
                     {% if field.name == 'ff_version' %}
                       <li class="system-details-info show">
                         <p>
@@ -115,7 +123,6 @@ we can compute the edit-title URL.
                         </p>
                       </li>
                     {% endif %}
-
                     {% if field.name == 'ff_version' or field.name == 'os' %}
                       {% set li_class='details' %}
                     {% endif %}
@@ -123,11 +130,21 @@ we can compute the edit-title URL.
 
                   <li class="{{ li_class }} {% if field.errors %}has-error invalid{% endif %} cf">
                     {{ field.label_tag()|safe }}
-
                     {% if field.name == 'content' %}
                       {{ content_editor(field) }}
                     {% elif field.name == 'troubleshooting' %}
                       {{ troubleshooting_instructions(field) }}
+                    {% elif field.name == 'description' and is_loginless %}
+                      <label for="{{ field.id_for_label }}">
+                        <span class="fieldnote">
+                          {{ _(
+                          "Include details such as your account e-mail or specifics about"
+                          " your sign-in issue to help us get you back into your account quicker."
+                          ) }}
+                        </span>
+                      </label>
+                      {{ field }}
+                      {{ field.errors }}
                     {% else %}
                       {{ field|safe }}
                     {% endif %}
@@ -174,7 +191,7 @@ we can compute the edit-title URL.
               <div class="sumo-button-wrap aaq-form-buttons reverse-on-desktop align-right">
                 <button type="submit" class="sumo-button primary-button" {% block submit_button_attrs %}{% endblock %}>{% block submit_button_value %}Save Question{% endblock %}</button>
                 {% block more_submit_buttons %}
-                <a class="sumo-button secondary-button push-right" href="{{ url('questions.aaq_step2', current_product.key) }}" class="cancel">{{ _('Cancel') }}</a>
+                <a class="sumo-button secondary-button push-right" href="{{ cancel_url }}" class="cancel">{{ _('Cancel') }}</a>
                 {% endblock %}
               </div>
             </form>

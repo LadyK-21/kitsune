@@ -6,9 +6,14 @@
 <!DOCTYPE html>
 <html class="no-js" lang="{{ request.LANGUAGE_CODE }}"{% if DIR %} dir="{{ DIR }}"{% endif %}{% if settings.GTM_CONTAINER_ID %} data-gtm-container-id="{{ settings.GTM_CONTAINER_ID }}"{% endif %}>
 <head>
+  {% include "includes/google-analytics.html" %}
+
   {% block head_top %}{% endblock %}
   <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-  <title>{% block title %}{% if title %}{{ title }} | {% endif %}{{ pgettext('site_title', 'Mozilla Support') }}{% endblock %}</title>
+
+  {% block head_title %}
+    <title>{% block title %}{% if title %}{{ title }} | {% endif %}{{ pgettext('site_title', 'Mozilla Support') }}{% endblock %}</title>
+  {% endblock %}
 
   {{ favicon() }}
 
@@ -53,8 +58,6 @@
   {% if canonical_url %}
     <link rel="canonical" href="{{ canonical_url|safe }}" />
   {% endif %}
-
-  {% include "includes/google-analytics.html" %}
 </head>
 
 <body class="html-{{ DIR }} logged-{% if user.is_authenticated %}in{% else %}out{% endif %} responsive {{ classes }} {{ request.LANGUAGE_CODE }}"
@@ -90,13 +93,13 @@
 <div id="announcements">
   {% call announcement_bar('geoip-suggestion', 'warning', close_memory="remember", close_type="remove") %}{% endcall %}
 
-  {% for announ in get_announcements() %}
-      {% call announcement_bar(announ.id, 'warn') %}
-          {{ announ.content }}
+  {% for announ in get_announcements(request) %}
+      {% call announcement_bar(announ.id, 'warning') %}
+          {{ announ.content | wiki_to_html }}
       {% endcall %}
   {% endfor %}
   {% if settings.READ_ONLY %}
-      {% call announcement_bar('read-only', 'warn') %}
+      {% call announcement_bar('read-only', 'warning') %}
           {% include "includes/readonly_annoucement.html" %}
       {% endcall %}
   {% endif %}
@@ -221,7 +224,7 @@
             <li><a href="https://www.mozilla.org/en-US/about/legal/fraud-report/">{{ _('Report Trademark Abuse') }}</a></li>
             <li><a href="https://github.com/mozilla/kitsune/">{{ _('Source code') }}</a></li>
             <li><a href="https://twitter.com/firefox">{{ _('Twitter') }}</a></li>
-            <li><a href="{{ url('landings.get_involved') }}">{{ _('Join our Community') }}</a></li>
+            <li><a href="{{ url('landings.contribute') }}">{{ _('Join our Community') }}</a></li>
             <li><a href="{{ url('home') }}">{{ _('Explore Help Articles')}}</a></li>
           </ul>
         </section>
@@ -249,11 +252,15 @@
         </section>
 
         <section class="mzp-c-footer-col">
-          <h5 class="mzp-c-footer-heading">{{ _('Firefox Accounts') }}</h5>
+          <h5 class="mzp-c-footer-heading">{{ _('Mozilla Account') }}</h5>
           <ul class="mzp-c-footer-list">
-            <li><a href="{{ url('users.auth') }}">{{ _('Sign In/Up') }}</a></li>
-            <li><a href="https://www.mozilla.org/en-US/firefox/accounts/">{{ _('Benefits') }}</a></li>
-            <li class="mzp-c-footer-heading"><br><a href="https://fpn.firefox.com/">{{ _('Firefox Private Network') }}</a></li>
+            {% if not request.user.is_authenticated %}
+              <li><a rel="nofollow" href="{{ url('users.auth') }}">{{ _('Sign In/Up') }}</a></li>
+            {% endif %}
+            <li><a href="{{ url('wiki.document', 'access-mozilla-services-firefox-account' )}}">{{ _('What Is It?') }}</a></li>
+            <li><a href="https://accounts.firefox.com/reset_password">{{ _('Reset Password') }}</a></li>
+            <li><a href="{{ url('wiki.document', 'switching-devices') }}">{{ _('Sync Your Data') }}</a></li>
+            <li><a href="{{ url('products.product', 'mozilla-account')}}">{{ _('Get Help') }}</a></li>
           </ul>
         </section>
 
@@ -330,5 +337,6 @@
 {% if settings.STAGE %}
   <script src="https://pontoon.mozilla.org/pontoon.js"></script>
 {% endif %}
+
 </body>
 </html>

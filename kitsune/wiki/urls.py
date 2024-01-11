@@ -11,6 +11,7 @@ document_patterns = [
     re_path(r"^/revision/(?P<revision_id>\d+)$", views.revision, name="wiki.revision"),
     re_path(r"^/history$", views.document_revisions, name="wiki.document_revisions"),
     re_path(r"^/edit$", views.edit_document, name="wiki.edit_document"),
+    re_path(r"^/edit/metadata$", views.edit_document_metadata, name="wiki.edit_document_metadata"),
     re_path(
         r"^/edit/(?P<revision_id>\d+)$", views.edit_document, name="wiki.new_revision_based_on"
     ),
@@ -35,7 +36,7 @@ document_patterns = [
         r"^/get-votes-async", views.get_helpful_votes_async, name="wiki.get_helpful_votes_async"
     ),
     # KB discussion forums
-    re_path(r"^/discuss", include("kitsune.kbforums.urls")),
+    re_path(r"^/discuss/", include("kitsune.kbforums.urls")),
     # Delete a revision
     re_path(
         r"^/revision/(?P<revision_id>\d+)/delete$",
@@ -103,7 +104,7 @@ urlpatterns = [
     re_path(
         r"^/How to contribute$",
         redirect_to,
-        {"url": "landings.get_involved"},
+        {"url": "landings.contribute"},
         name="old_get_involved",
     ),
     re_path(r"^/locales$", locale_views.locale_list, name="wiki.locales"),
@@ -158,5 +159,16 @@ urlpatterns += [
     ),
     re_path(
         r"^/discuss/watch_locale$", kbforums_views.watch_locale, name="wiki.discuss.watch_locale"
+    ),
+]
+
+urlpatterns += [
+    # Redirect for pocket articles
+    # This assumes pocket redirects take the form of:
+    # /pocket/<article_id>-<document_slug>
+    re_path(
+        r"^/pocket/(?:(?P<article_id>\d+)-)?(?P<document_slug>[\w-]+)(?P<extra_path>/[\w/-]*)?/?$",
+        views.pocket_article,
+        name="wiki.pocket_article",
     ),
 ]

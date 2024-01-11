@@ -1,7 +1,7 @@
 import hashlib
 import logging
 from datetime import datetime, timedelta
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 
 import waffle
 from django.conf import settings
@@ -10,20 +10,21 @@ from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, models
 from django.db.models import Q
-from django.http import Http404
-from django.urls import resolve
+from django.db.models.functions import Now
+from django.urls import is_valid_path
 from django.utils.encoding import smart_bytes
-from django.utils.translation import gettext_lazy as _lazy
-from django.utils.translation import ugettext as _
+from django.utils import translation
+from django.utils.translation import gettext_lazy as _lazy, gettext as _
 from pyquery import PyQuery
-from tidings.models import NotificationsMixin
 
 from kitsune.gallery.models import Image
 from kitsune.products.models import Product, Topic
 from kitsune.sumo.apps import ProgrammingError
+from kitsune.sumo.i18n import split_into_language_and_path
 from kitsune.sumo.models import LocaleField, ModelBase
-from kitsune.sumo.urlresolvers import reverse, split_path
+from kitsune.sumo.urlresolvers import reverse
 from kitsune.tags.models import BigVocabTaggableMixin
+from kitsune.tidings.models import NotificationsMixin
 from kitsune.wiki.config import (
     ADMINISTRATION_CATEGORY,
     CANNED_RESPONSES_CATEGORY,
@@ -40,7 +41,12 @@ from kitsune.wiki.config import (
     TEMPLATES_CATEGORY,
     TYPO_SIGNIFICANCE,
 )
-from kitsune.wiki.permissions import DocumentPermissionMixin
+from kitsune.wiki.managers import DocumentManager, RevisionManager
+
+from kitsune.wiki.permissions import (
+    can_delete_documents_or_review_revisions,
+    DocumentPermissionMixin,
+)
 
 log = logging.getLogger("k.wiki")
 MAX_REVISION_COMMENT_LENGTH = 255
@@ -52,10 +58,6 @@ class TitleCollision(Exception):
 
 class SlugCollision(Exception):
     """An attempt to create two pages of the same slug in one locale"""
-
-
-class _NotDocumentView(Exception):
-    """A URL not pointing to the document view was passed to from_url()."""
 
 
 class Document(NotificationsMixin, ModelBase, BigVocabTaggableMixin, DocumentPermissionMixin):
@@ -150,13 +152,15 @@ class Document(NotificationsMixin, ModelBase, BigVocabTaggableMixin, DocumentPer
 
     updated_column_name = "current_revision__created"
 
+    objects = DocumentManager()
+
     # firefox_versions,
     # operating_systems:
     #    defined in the respective classes below. Use them as in
     #    test_firefox_versions.
 
     # TODO: Rethink indexes once controller code is near complete. Depending on
-    # how MySQL uses indexes, we probably don't need individual indexes on
+    # how PostgreSQL uses indexes, we probably don't need individual indexes on
     # title and locale as well as a combined (title, locale) one.
     class Meta(object):
         ordering = ["display_order", "id"]
@@ -432,7 +436,7 @@ class Document(NotificationsMixin, ModelBase, BigVocabTaggableMixin, DocumentPer
         return reverse("wiki.document", locale=self.locale, args=[self.slug])
 
     @classmethod
-    def from_url(cls, url, required_locale=None, id_only=False, check_host=True):
+    def from_url(cls, url, required_locale=None, id_only=False):
         """Return the approved Document the URL represents, None if there isn't
         one.
 
@@ -442,36 +446,25 @@ class Document(NotificationsMixin, ModelBase, BigVocabTaggableMixin, DocumentPer
         To limit the universe of discourse to a certain locale, pass in a
         `required_locale`. To fetch only the ID of the returned Document, set
         `id_only` to True.
-
-        If the URL has a host component, we assume it does not point to this
-        host and thus does not point to a Document, because that would be a
-        needlessly verbose way to specify an internal link. However, if you
-        pass check_host=False, we assume the URL's host is the one serving
-        Documents, which comes in handy for analytics whose metrics return
-        host-having URLs.
-
         """
-        try:
-            components = _doc_components_from_url(
-                url, required_locale=required_locale, check_host=check_host
-            )
-        except _NotDocumentView:
+        if not (
+            match := get_locale_and_slug_from_document_url(url, required_locale=required_locale)
+        ):
             return None
-        if not components:
-            return None
-        locale, path, slug = components
+
+        locale, slug = match
 
         doc = cls.objects
         if id_only:
             doc = doc.only("id")
+
         try:
             doc = doc.get(locale=locale, slug=slug)
         except cls.DoesNotExist:
             try:
                 doc = doc.get(locale=settings.WIKI_DEFAULT_LANGUAGE, slug=slug)
-                translation = doc.translated_to(locale)
-                if translation:
-                    return translation
+                if translated := doc.translated_to(locale):
+                    return translated
                 return doc
             except cls.DoesNotExist:
                 return None
@@ -499,9 +492,9 @@ class Document(NotificationsMixin, ModelBase, BigVocabTaggableMixin, DocumentPer
                 # don't want to override the redirects that are forcibly
                 # changing to (or staying within) a specific locale.
                 full_url = anchors[0].get("href")
-                (dest_locale, url) = split_path(full_url)
+                (dest_locale, url) = split_into_language_and_path(full_url)
                 if source_locale != dest_locale and dest_locale == settings.LANGUAGE_CODE:
-                    return "/" + source_locale + "/" + url
+                    return f"/{source_locale}{url}"
                 return full_url
 
     def redirect_document(self):
@@ -540,7 +533,7 @@ class Document(NotificationsMixin, ModelBase, BigVocabTaggableMixin, DocumentPer
             and not waffle.switch_is_active("hide-voting")
         )
 
-    def translated_to(self, locale):
+    def translated_to(self, locale, visible_for_user=None):
         """Return the translation of me to the given locale.
 
         If there is no such Document, return None.
@@ -553,6 +546,8 @@ class Document(NotificationsMixin, ModelBase, BigVocabTaggableMixin, DocumentPer
                 "far."
             )
         try:
+            if visible_for_user:
+                return Document.objects.get_visible(visible_for_user, locale=locale, parent=self)
             return Document.objects.get(locale=locale, parent=self)
         except Document.DoesNotExist:
             return None
@@ -651,9 +646,11 @@ class Document(NotificationsMixin, ModelBase, BigVocabTaggableMixin, DocumentPer
     @property
     def recent_helpful_votes(self):
         """Return the number of helpful votes in the last 30 days."""
-        start = datetime.now() - timedelta(days=30)
         return HelpfulVote.objects.filter(
-            revision__document=self, created__gt=start, helpful=True
+            revision__document=self,
+            # Use "__range" to ensure the database index is used in Postgres.
+            created__range=(datetime.now() - timedelta(days=30), Now()),
+            helpful=True,
         ).count()
 
     def parse_and_calculate_links(self):
@@ -711,6 +708,37 @@ class Document(NotificationsMixin, ModelBase, BigVocabTaggableMixin, DocumentPer
         # Clear out both mobile and desktop templates.
         cache.delete(doc_html_cache_key(self.locale, self.slug))
 
+    def is_visible_for(self, user):
+        """
+        This document is effectively invisible when it has no approved content,
+        and the given user is not a superuser, nor allowed to delete documents or
+        review revisions, nor a creator of one of the document's (yet unapproved)
+        revisions.
+        """
+        return (
+            self.current_revision
+            or user.is_superuser
+            or (
+                user.is_authenticated
+                and (
+                    can_delete_documents_or_review_revisions(user, locale=self.locale)
+                    or self.revisions.filter(creator=user).exists()
+                )
+            )
+        )
+
+    @property
+    def is_switching_devices_document(self):
+        return (
+            self.parent.slug if self.parent else self.slug
+        ) in settings.FIREFOX_SWITCHING_DEVICES_ARTICLES
+
+    @property
+    def gets_mozilla_account_cta(self):
+        return (
+            self.parent.slug if self.parent else self.slug
+        ) in settings.MOZILLA_ACCOUNT_ARTICLES
+
 
 class AbstractRevision(models.Model):
     # **%(class)s** is being used because it will allow  a unique reverse name for the field
@@ -764,7 +792,10 @@ class Revision(ModelBase, AbstractRevision):
         User, on_delete=models.CASCADE, related_name="readied_for_l10n_revisions", null=True
     )
 
+    objects = RevisionManager()
+
     class Meta(object):
+        indexes = [models.Index(fields=["created"])]
         permissions = [
             ("review_revision", "Can review a revision"),
             ("mark_ready_for_l10n", "Can mark revision as ready for localization"),
@@ -960,7 +991,7 @@ class Revision(ModelBase, AbstractRevision):
             return None
 
 
-class DraftRevision(ModelBase, AbstractRevision):
+class DraftRevision(ModelBase, AbstractRevision):  # type: ignore
     based_on = models.ForeignKey(Revision, on_delete=models.CASCADE)
     content = models.TextField(blank=True)
     locale = LocaleField(blank=False, db_index=True)
@@ -1056,44 +1087,35 @@ class DocumentImage(ModelBase):
         return "<DocumentImage: {doc} includes {img}>".format(doc=self.document, img=self.image)
 
 
-def _doc_components_from_url(url, required_locale=None, check_host=True):
-    """Return (locale, path, slug) if URL is a Document, False otherwise.
-
-    If URL doesn't even point to the document view, raise _NotDocumentView.
-
+def get_locale_and_slug_from_document_url(url, required_locale=None):
     """
-    # Extract locale and path from URL:
-    parsed = urlparse(url)  # Never has errors AFAICT
-    if check_host and parsed.netloc:
-        return False
-    locale, path = split_path(parsed.path)
-    if required_locale and locale != required_locale:
-        return False
-    path = "/" + unquote(path)
+    Return a tuple of the document's (locale, slug) if the URL resolves
+    to the document view, None otherwise.
+    """
+    parsed = urlparse(url)
 
-    try:
-        view, view_args, view_kwargs = resolve(path)
-    except Http404:
-        return False
+    locale, _ = split_into_language_and_path(parsed.path)
 
-    import kitsune.wiki.views  # Views import models; models import views.
+    if required_locale and (locale != required_locale):
+        return None
 
-    if view != kitsune.wiki.views.document:
-        raise _NotDocumentView
-    return locale, path, view_kwargs["document_slug"]
+    with translation.override(locale):
+        match = is_valid_path(parsed.path)
+
+    if not (match and match.url_name == "wiki.document"):
+        return None
+
+    return (locale, match.kwargs["document_slug"])
 
 
-def points_to_document_view(url, required_locale=None):
-    """Return whether a URL reverses to the document view.
+def resolves_to_document_view(url, required_locale=None):
+    """
+    Return whether a URL reverses to the document view.
 
     To limit the universe of discourse to a certain locale, pass in a
     `required_locale`.
-
     """
-    try:
-        return not not _doc_components_from_url(url, required_locale=required_locale)
-    except _NotDocumentView:
-        return False
+    return bool(get_locale_and_slug_from_document_url(url, required_locale=required_locale))
 
 
 def user_num_documents(user):

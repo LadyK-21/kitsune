@@ -8,7 +8,7 @@ from django.contrib.auth.models import User
 from django.db import transaction
 from django.urls import reverse as django_reverse
 from django.utils.translation import activate
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 from mozilla_django_oidc.auth import OIDCAuthenticationBackend
 
 from kitsune.customercare.tasks import update_zendesk_identity
@@ -25,7 +25,7 @@ class SumoOIDCAuthBackend(OIDCAuthenticationBackend):
         """Authenticate a user based on the OIDC code flow."""
 
         # If the request has the /fxa/callback/ path then probably there is a login
-        # with Firefox Accounts. In this case just return None and let
+        # with Mozilla accounts. In this case just return None and let
         # the FxA backend handle this request.
         if request and not request.path == django_reverse("oidc_authentication_callback"):
             return None
@@ -40,7 +40,7 @@ class FXAAuthBackend(OIDCAuthenticationBackend):
 
     @staticmethod
     def get_settings(attr, *args):
-        """Override settings for Firefox Accounts Provider."""
+        """Override settings for Mozilla accounts Provider."""
         val = get_oidc_fxa_setting(attr)
         if val is not None:
             return val
@@ -77,12 +77,20 @@ class FXAAuthBackend(OIDCAuthenticationBackend):
         except requests.exceptions.HTTPError:
             return {}
 
+    def update_contributor_status(self, profile):
+        """Register user as contributor."""
+        # The request attribute might not be set.
+        request = getattr(self, "request", None)
+        if request and (contribution_area := request.session.get("contributor")):
+            add_to_contributors(profile.user, profile.locale, contribution_area)
+            del request.session["contributor"]
+
     def create_user(self, claims):
         """Override create user method to mark the profile as migrated."""
 
         user = super(FXAAuthBackend, self).create_user(claims)
         # Create a user profile for the user and populate it with data from
-        # Firefox Accounts
+        # Mozilla accounts
         profile, created = Profile.objects.get_or_create(user=user)
         profile.is_fxa_migrated = True
         profile.fxa_uid = claims.get("uid")
@@ -112,7 +120,7 @@ class FXAAuthBackend(OIDCAuthenticationBackend):
         messages.success(
             self.request,
             _(
-                "<strong>Welcome!</strong> You are now logged in using Firefox Accounts. "
+                "<strong>Welcome!</strong> You are now signed in using your Mozilla account. "
                 + "{a_profile}Edit your profile.{a_close}<br>"
                 + "Already have a different Mozilla Support Account? "
                 + "{a_more}Read more.{a_close}"
@@ -126,9 +134,8 @@ class FXAAuthBackend(OIDCAuthenticationBackend):
             extra_tags="safe",
         )
 
-        if self.request.session.get("is_contributor", False):
-            add_to_contributors(user, profile.locale)
-            del self.request.session["is_contributor"]
+        # update contributor status
+        self.update_contributor_status(profile)
 
         return user
 
@@ -140,10 +147,10 @@ class FXAAuthBackend(OIDCAuthenticationBackend):
 
         # something went terribly wrong. Return None
         if not fxa_uid:
-            log.warning("Failed to get Firefox Account UID.")
+            log.warning("Failed to get Mozilla account UID.")
             return users
 
-        # A existing user is attempting to connect a Firefox Account to the SUMO profile
+        # A existing user is attempting to connect a Mozilla account to the SUMO profile
         # NOTE: this section will be dropped when the migration is complete
         if self.request and self.request.user and self.request.user.is_authenticated:
             return [self.request.user]
@@ -190,11 +197,11 @@ class FXAAuthBackend(OIDCAuthenticationBackend):
         # Check if the user has active subscriptions
         subscriptions = claims.get("subscriptions", [])
 
-        if not profile.is_fxa_migrated:
-            # Check if there is already a Firefox Account with this ID
+        if (request := getattr(self, "request", None)) and not profile.is_fxa_migrated:
+            # Check if there is already a Mozilla account with this ID
             if Profile.objects.filter(fxa_uid=fxa_uid).exists():
-                msg = _("This Firefox Account is already used in another profile.")
-                messages.error(self.request, msg)
+                msg = _("This Mozilla account is already used in another profile.")
+                messages.error(request, msg)
                 return None
 
             # If it's not migrated, we can assume that there isn't an FxA id too
@@ -202,18 +209,19 @@ class FXAAuthBackend(OIDCAuthenticationBackend):
             profile.fxa_uid = fxa_uid
             # This is the first time an existing user is using FxA. Redirect to profile edit
             # in case the user wants to update any settings.
-            self.request.session["oidc_login_next"] = reverse("users.edit_my_profile")
-            messages.info(self.request, "fxa_notification_updated")
+            request.session["oidc_login_next"] = reverse("users.edit_my_profile")
+            messages.info(request, "fxa_notification_updated")
 
-        # There is a change in the email in Firefox Accounts. Let's update user's email
+        # There is a change in the email in Mozilla accounts. Let's update user's email
         # unless we have a superuser
-        if user.email != email and not user.is_staff:
+        if email and (email != user.email) and not user.is_staff:
             if User.objects.exclude(id=user.id).filter(email=email).exists():
-                msg = _(
-                    "The email used with this Firefox Account is already "
-                    "linked in another profile."
-                )
-                messages.error(self.request, msg)
+                if request:
+                    msg = _(
+                        "The e-mail address used with this Mozilla account is already "
+                        "linked in another profile."
+                    )
+                    messages.error(request, msg)
                 return None
             user.email = email
             user_attr_changed = True
@@ -224,6 +232,9 @@ class FXAAuthBackend(OIDCAuthenticationBackend):
         products = Product.objects.filter(codename__in=subscriptions)
         profile.products.clear()
         profile.products.add(*products)
+
+        # update contributor status
+        self.update_contributor_status(profile)
 
         # Users can select their own display name.
         if not profile.name:

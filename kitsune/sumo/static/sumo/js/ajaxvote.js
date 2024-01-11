@@ -32,7 +32,7 @@ export default function AjaxVote(form, options) {
       self.voted = false;
       self.$form = $ajaxForm;
 
-      $btns.click(function(e) {
+      $btns.on('click', function(e) {
         if (!self.voted) {
           var $btn = $(this),
             $form = $btn.closest('form'),
@@ -59,7 +59,7 @@ export default function AjaxVote(form, options) {
                 self.showMessage(response.message, $btn, $form);
               }
               $btn.addClass('active');
-              $btns.removeAttr('disabled');
+              $btns.prop("disabled", false);
               $form.removeClass('busy');
               self.voted = true;
 
@@ -74,13 +74,13 @@ export default function AjaxVote(form, options) {
             error: function() {
               var msg = gettext('There was an error submitting your vote.');
               self.showMessage(msg, $btn);
-              $btns.removeAttr('disabled');
+              $btns.prop("disabled", false);
               $form.removeClass('busy');
             }
           });
         }
 
-        $(this).blur();
+        $(this).trigger('blur');
         e.preventDefault();
         return false;
       });
@@ -120,7 +120,7 @@ export default function AjaxVote(form, options) {
             self.$form.remove();
           });
         }
-        $('body').unbind('click', fadeOut);
+        $('body').off('click', fadeOut);
         clearTimeout(timer);
       }
     },
@@ -154,7 +154,7 @@ export default function AjaxVote(form, options) {
         }
       }
 
-      $commentBox.bind('input', function() {
+      $commentBox.on('input', function() {
         var currentCount = $commentBox.val().length;
         var checked;
 
@@ -167,7 +167,7 @@ export default function AjaxVote(form, options) {
         validate();
       });
 
-      $radios.bind('change', validate);
+      $radios.on('change', validate);
 
       new AjaxVote($survey.find('form'), {
         replaceFormWithMessage: true

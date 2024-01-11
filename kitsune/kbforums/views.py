@@ -2,6 +2,7 @@ import logging
 from datetime import datetime
 
 from django.core.exceptions import PermissionDenied
+from django.db.models import F
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
@@ -21,16 +22,16 @@ from kitsune.lib.sumo_locales import LOCALES
 from kitsune.sumo.urlresolvers import reverse
 from kitsune.sumo.utils import paginate, get_next_url, is_ratelimited
 from kitsune.users.models import Setting
-from kitsune.wiki.models import Document
+from kitsune.wiki.views import get_visible_document_or_404
 
 
 log = logging.getLogger("k.kbforums")
 
 
 def get_document(slug, request):
-    """Given a slug and a request, get the document or 404."""
-    return get_object_or_404(
-        Document, slug=slug, locale=request.LANGUAGE_CODE, allow_discussion=True
+    """Given a slug and a request, get the visible document or 404."""
+    return get_visible_document_or_404(
+        request.user, locale=request.LANGUAGE_CODE, slug=slug, allow_discussion=True
     )
 
 
@@ -45,7 +46,9 @@ def sort_threads(threads_, sort=0, desc=0):
     elif sort == 4:
         return threads_.order_by(prefix + "replies").all()
     elif sort == 5:
-        return threads_.order_by(prefix + "last_post__created").all()
+        if desc:
+            return threads_.order_by(F("last_post__created").desc(nulls_last=True)).all()
+        return threads_.order_by(F("last_post__created").asc(nulls_first=True)).all()
 
     # If nothing matches, use default sorting
     return threads_.all()
@@ -171,7 +174,7 @@ def reply(request, document_slug, thread_id):
                     NewPostEvent.notify(request.user, thread)
 
                 # Send notifications to thread/forum watchers.
-                NewPostEvent(reply_).fire(exclude=reply_.creator)
+                NewPostEvent(reply_).fire(exclude=[reply_.creator])
 
                 return HttpResponseRedirect(reply_.get_absolute_url())
 
@@ -202,7 +205,7 @@ def new_thread(request, document_slug):
             post.save()
 
             # Send notifications to forum watchers.
-            NewThreadEvent(post).fire(exclude=post.creator)
+            NewThreadEvent(post).fire(exclude=[post.creator])
 
             # Add notification automatically if needed.
             if Setting.get_for_user(request.user, "kbforums_watch_new_thread"):

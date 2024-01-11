@@ -33,6 +33,12 @@ const entrypoints = {
     "sumo/js/document.js",
     "sumo/js/wiki.metrics.js",
   ],
+  "switching-devices": [
+    "sumo/js/device-migration-wizard.js",
+  ],
+  revision: [
+    "sumo/js/revision.js",
+  ],
   questions: [
     "sumo/js/questions.js",
     "sumo/js/tags.filter.js",
@@ -98,6 +104,9 @@ const entrypoints = {
   "gtm-snippet": [
     "sumo/js/gtm-snippet.js",
   ],
+  contribute: [
+    "./svelte/contribute",
+  ]
 }
 
 for (let key in entrypoints) {

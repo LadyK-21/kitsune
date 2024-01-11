@@ -127,10 +127,10 @@ import nunjucksEnv from "sumo/js/nunjucks"; // has to be loaded after templates
 
   $(document).on('submit', '[data-instant-search="form"]', function(ev) {
     ev.preventDefault();
-    $(this).find('.searchbox').focus();
+    $(this).find('.searchbox').trigger('focus');
   });
 
-  $(document).on('keyup', '[data-instant-search="form"] input[type="search"]', function(ev) {
+  $(document).on('input', '[data-instant-search="form"] input[type="search"]', function(ev) {
     var $this = $(this);
     var $form = $this.closest('form');
     var formId = $form.attr('id');
@@ -191,11 +191,11 @@ import nunjucksEnv from "sumo/js/nunjucks"; // has to be loaded after templates
     }
 
     if (aaq_explore_step) {
-      $(".question-masthead").find("input[name=q]").focus();
+      $(".question-masthead").find("input[name=q]").trigger('focus');
     } else if ($(".hidden-search-masthead").length > 0) {
-      $(".hidden-search-masthead").find("input[name=q]").focus();
+      $(".hidden-search-masthead").find("input[name=q]").trigger('focus');
     } else {
-      $("#support-search-masthead").find("input[name=q]").focus();
+      $("#support-search-masthead").find("input[name=q]").trigger('focus');
     }
   });
 
@@ -233,8 +233,8 @@ import nunjucksEnv from "sumo/js/nunjucks"; // has to be loaded after templates
   $(document).on('click', '[data-featured-search]', function(ev) {
     var $mainInput = $('#support-search-masthead input[name=q]');
     var thisLink = $(this).text();
-    $('#support-search-masthead input[name=q]').focus().val(thisLink);
-    $mainInput.trigger("keyup");
+    $('#support-search-masthead input[name=q]').trigger('focus').val(thisLink);
+    $mainInput.trigger("input");
     ev.preventDefault();
   });
 
@@ -245,16 +245,16 @@ import nunjucksEnv from "sumo/js/nunjucks"; // has to be loaded after templates
       InstantSearchSettings.showContent();
     } else if (aaq_explore_step) {
       // in aaq explore step, we don't want to show the default masthead
-      $('#question-search-masthead').find('input[name=q]').focus();
+      $('#question-search-masthead').find('input[name=q]').trigger('focus');
       window.scrollTo(0, 0);
     } else if ($('.hidden-search-masthead').length > 0) {
       $('body').addClass('search-results-visible');
       $('.hidden-search-masthead').show();
-      $('.hidden-search-masthead').find('input[name=q]').focus();
+      $('.hidden-search-masthead').find('input[name=q]').trigger('focus');
       window.scrollTo(0, 0);
     } else {
       // catchall for pages with a searchbox in the masthead
-      $('.simple-search-form .searchbox').trigger('keyup').focus();
+      $('.simple-search-form .searchbox').trigger('keyup').trigger('focus');
     }
 
     ev.preventDefault();

@@ -138,10 +138,6 @@ class BadgeException(Exception):
     """General Badger model exception"""
 
 
-class BadgeException(BadgeException):
-    """Badge model exception"""
-
-
 class BadgeAwardNotAllowedException(BadgeException):
     """Attempt to award a badge not allowed."""
 
@@ -375,7 +371,6 @@ class Award(models.Model):
         return False
 
     def save(self, *args, **kwargs):
-
         # Signals and some bits of logic only happen on a new award.
         is_new = not self.pk
 

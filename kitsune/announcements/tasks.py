@@ -1,16 +1,15 @@
+import bleach
+from celery import shared_task
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.sites.models import Site
-from django.utils.translation import ugettext as _
-
-import bleach
-from celery import task
+from django.utils.translation import gettext as _
 
 from kitsune.announcements.models import Announcement
 from kitsune.sumo.email_utils import make_mail, safe_translation, send_messages
 
 
-@task()
+@shared_task
 def send_group_email(announcement_id):
     """Build and send the announcement emails to a group."""
     try:
@@ -18,8 +17,8 @@ def send_group_email(announcement_id):
     except Announcement.DoesNotExist:
         return
 
-    group = announcement.group
-    users = User.objects.filter(groups__in=[group])
+    groups = announcement.groups.all()
+    users = User.objects.filter(groups__in=groups).distinct()
     plain_content = bleach.clean(announcement.content_parsed, tags=[], strip=True).strip()
     email_kwargs = {
         "content": plain_content,
@@ -31,7 +30,10 @@ def send_group_email(announcement_id):
 
     @safe_translation
     def _make_mail(locale, user):
-        subject = _("New announcement for {group}").format(group=group.name)
+        if groups.count() == 1:
+            subject = _(f"New announcement for {groups[0].name}")
+        else:
+            subject = _(f"New announcement for groups [{', '.join([g.name for g in groups])}]")
 
         mail = make_mail(
             subject=subject,

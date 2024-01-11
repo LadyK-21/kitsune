@@ -1,18 +1,5 @@
 {
-    "python.pythonPath": "/venv/bin/python",
-    "python.formatting.provider": "black",
-    "python.formatting.blackPath": "/venv/bin/black",
-    "python.formatting.blackArgs": [
-        "--config=/app/pyproject.toml"
-    ],
-    "python.linting.enabled": true,
-    "python.linting.flake8Enabled": false,
-    "python.linting.pylintEnabled": true,
-    "python.linting.pylintArgs": [
-        "--disable=C0111",
-        "--enable=W0614",
-        "--load-plugins=pylint_django"
-    ],
+    "python.defaultInterpreterPath": "/venv/bin/python",
     "python.autoComplete.extraPaths": [
         "/vendor"
     ],
@@ -39,5 +26,11 @@
     },
     "[jsonc]": {
         "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "[svelte]": {
+        "editor.defaultFormatter": "svelte.svelte-vscode"
+    },
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter"
     }
 }

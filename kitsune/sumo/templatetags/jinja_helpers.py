@@ -3,6 +3,7 @@ import json as jsonlib
 import logging
 import re
 import urllib
+from zoneinfo import ZoneInfo
 
 import bleach
 import jinja2
@@ -13,24 +14,26 @@ from django.conf import settings
 from django.http import QueryDict
 from django.template.loader import render_to_string
 from django.templatetags.static import static as django_static
-from django.utils.encoding import smart_bytes, smart_text
+from django.utils.encoding import smart_bytes
+from django.utils.encoding import smart_str
 from django.utils.http import urlencode
-from django.utils.timezone import get_default_timezone
-from django.utils.translation import ugettext as _
+from django.utils.timezone import get_default_timezone, is_aware, is_naive
+from django.utils.translation import gettext as _
 from django.utils.translation import gettext_lazy as _lazy
-from django.utils.translation import ungettext
+from django.utils.translation import ngettext
 from django_jinja import library
-from jinja2.utils import Markup
-from pytz import timezone
+from markupsafe import Markup, escape
+import wikimarkup.parser
 
 from kitsune.products.models import Product
 from kitsune.sumo import parser
 from kitsune.sumo.urlresolvers import reverse
+from kitsune.sumo.utils import is_trusted_user as is_trusted_user_func
 from kitsune.sumo.utils import webpack_static as webpack_static_func
 from kitsune.users.models import Profile
 from kitsune.wiki.showfor import showfor_data as _showfor_data
 
-ALLOWED_BIO_TAGS = bleach.ALLOWED_TAGS + ["p"]
+ALLOWED_BIO_TAGS = bleach.ALLOWED_TAGS | {"p"}
 ALLOWED_BIO_ATTRIBUTES = bleach.ALLOWED_ATTRIBUTES.copy()
 # allow rel="nofollow"
 ALLOWED_BIO_ATTRIBUTES["a"].append("rel")
@@ -51,17 +54,17 @@ def paginator(pager):
 
 @library.filter
 def simple_paginator(pager):
-    return jinja2.Markup(render_to_string("includes/simple_paginator.html", {"pager": pager}))
+    return Markup(render_to_string("includes/simple_paginator.html", {"pager": pager}))
 
 
 @library.filter
 def quick_paginator(pager):
-    return jinja2.Markup(render_to_string("includes/quick_paginator.html", {"pager": pager}))
+    return Markup(render_to_string("includes/quick_paginator.html", {"pager": pager}))
 
 
 @library.filter
 def mobile_paginator(pager):
-    return jinja2.Markup(render_to_string("includes/mobile/paginator.html", {"pager": pager}))
+    return Markup(render_to_string("includes/mobile/paginator.html", {"pager": pager}))
 
 
 @library.global_function
@@ -111,18 +114,30 @@ def urlparams(url_, hash=None, query_dict=None, **query):
 
 
 @library.filter
-def wiki_to_html(wiki_markup, locale=settings.WIKI_DEFAULT_LANGUAGE, nofollow=True):
-    """Wiki Markup -> HTML jinja2.Markup object"""
+def wiki_to_html(
+    wiki_markup, locale=settings.WIKI_DEFAULT_LANGUAGE, nofollow=True, tags=None, attributes=None
+):
+    """Wiki Markup -> HTML Markup object"""
     if not wiki_markup:
         return ""
-    return jinja2.Markup(parser.wiki_to_html(wiki_markup, locale=locale, nofollow=nofollow))
+    return Markup(
+        parser.wiki_to_html(
+            wiki_markup, locale=locale, nofollow=nofollow, tags=tags, attributes=attributes
+        )
+    )
 
 
 @library.filter
 def wiki_to_safe_html(wiki_markup, locale=settings.WIKI_DEFAULT_LANGUAGE, nofollow=True):
-    """Wiki Markup -> HTML jinja2.Markup object with limited tags"""
-    html = parser.wiki_to_html(wiki_markup, locale=locale, nofollow=nofollow)
-    return jinja2.Markup(
+    """Wiki Markup -> HTML Markup object with limited tags"""
+    html = parser.wiki_to_html(
+        wiki_markup,
+        locale=locale,
+        nofollow=nofollow,
+        tags=wikimarkup.parser.ALLOWED_TAGS + ["abbr"],
+        attributes=wikimarkup.parser.ALLOWED_ATTRIBUTES | {"abbr": ["title"]},
+    )
+    return Markup(
         bleach.clean(html, tags=ALLOWED_BIO_TAGS, attributes=ALLOWED_BIO_ATTRIBUTES, strip=True)
     )
 
@@ -176,7 +191,7 @@ class Paginator(object):
 
     def render(self):
         c = {"pager": self.pager, "num_pages": self.num_pages, "count": self.count}
-        return jinja2.Markup(render_to_string("layout/paginator.html", c))
+        return Markup(render_to_string("layout/paginator.html", c))
 
 
 @jinja2.pass_context
@@ -202,7 +217,7 @@ def breadcrumbs(context, items=list(), add_default=True, id=None):
 
     c = {"breadcrumbs": crumbs, "id": id}
 
-    return jinja2.Markup(render_to_string("layout/breadcrumbs.html", c))
+    return Markup(render_to_string("layout/breadcrumbs.html", c))
 
 
 def _babel_locale(locale):
@@ -233,10 +248,11 @@ def datetimeformat(context, value, format="shortdatetime"):
 
     request = context.get("request")
 
-    default_tzinfo = convert_tzinfo = timezone(settings.TIME_ZONE)
-    if value.tzinfo is None:
-        value = default_tzinfo.localize(value)
-        new_value = value.astimezone(default_tzinfo)
+    default_tzinfo = convert_tzinfo = ZoneInfo(settings.TIME_ZONE)
+    if is_naive(value):
+        # Since Python 3.9, due to the introduction of the new "fold" parameter, this is the
+        # recommended way to convert a datetime instance from "naive" to "aware".
+        new_value = value.replace(tzinfo=default_tzinfo)
     else:
         new_value = value
 
@@ -286,7 +302,7 @@ def datetimeformat(context, value, format="shortdatetime"):
         # Unknown format
         raise DateTimeFormatError
 
-    return jinja2.Markup('<time datetime="%s">%s</time>' % (convert_value.isoformat(), formatted))
+    return Markup('<time datetime="%s">%s</time>' % (convert_value.isoformat(), formatted))
 
 
 _whitespace_then_break = re.compile(r"[\r\n\t ]+[\r\n]+")
@@ -349,32 +365,29 @@ def timesince(d, now=None):
     chunks = [
         (
             60 * 60 * 24 * 365,
-            lambda n: ungettext("%(number)d year ago", "%(number)d years ago", n),
+            lambda n: ngettext("%(number)d year ago", "%(number)d years ago", n),
         ),
         (
             60 * 60 * 24 * 30,
-            lambda n: ungettext("%(number)d month ago", "%(number)d months ago", n),
+            lambda n: ngettext("%(number)d month ago", "%(number)d months ago", n),
         ),
         (
             60 * 60 * 24 * 7,
-            lambda n: ungettext("%(number)d week ago", "%(number)d weeks ago", n),
+            lambda n: ngettext("%(number)d week ago", "%(number)d weeks ago", n),
         ),
         (
             60 * 60 * 24,
-            lambda n: ungettext("%(number)d day ago", "%(number)d days ago", n),
+            lambda n: ngettext("%(number)d day ago", "%(number)d days ago", n),
         ),
         (
             60 * 60,
-            lambda n: ungettext("%(number)d hour ago", "%(number)d hours ago", n),
+            lambda n: ngettext("%(number)d hour ago", "%(number)d hours ago", n),
         ),
-        (60, lambda n: ungettext("%(number)d minute ago", "%(number)d minutes ago", n)),
-        (1, lambda n: ungettext("%(number)d second ago", "%(number)d seconds ago", n)),
+        (60, lambda n: ngettext("%(number)d minute ago", "%(number)d minutes ago", n)),
+        (1, lambda n: ngettext("%(number)d second ago", "%(number)d seconds ago", n)),
     ]
     if not now:
-        if d.tzinfo:
-            # TODO: is this correct?
-            # https://docs.djangoproject.com/en/1.8/_modules/django/utils/tzinfo/#LocalTimezone
-            # https://docs.djangoproject.com/en/1.9/_modules/django/utils/timezone/#get_default_timezone
+        if is_aware(d):
             now = datetime.datetime.now(get_default_timezone())
         else:
             now = datetime.datetime.now()
@@ -397,12 +410,12 @@ def label_with_help(f):
     """Print the label tag for a form field, including the help_text
     value as a title attribute."""
     label = '<label for="%s" title="%s">%s</label>'
-    return jinja2.Markup(label % (f.auto_id, f.help_text, f.label))
+    return Markup(label % (f.auto_id, f.help_text, f.label))
 
 
 @library.filter
 def yesno(boolean_value):
-    return jinja2.Markup(_lazy("Yes") if boolean_value else _lazy("No"))
+    return Markup(_lazy("Yes") if boolean_value else _lazy("No"))
 
 
 @library.filter
@@ -469,7 +482,7 @@ def class_selected(a, b):
     Return 'class="selected"' if a == b, otherwise return ''.
     """
     if a == b:
-        return jinja2.Markup('class="selected"')
+        return Markup('class="selected"')
     else:
         return ""
 
@@ -495,17 +508,17 @@ def f(format_string, *args, **kwargs):
 def fe(format_string, *args, **kwargs):
     """Format a safe string with potentially unsafe arguments. returns a safe string."""
 
-    args = [jinja2.escape(smart_text(v)) for v in args]
+    args = [escape(smart_str(v)) for v in args]
 
     for k in kwargs:
-        kwargs[k] = jinja2.escape(smart_text(kwargs[k]))
+        kwargs[k] = escape(smart_str(kwargs[k]))
 
     # Jinja will sometimes give us a str and other times give a unicode
     # for the `format_string` parameter, and we can't control it, so coerce it here.
     if isinstance(format_string, str):  # not unicode
         format_string = str(format_string)
 
-    return jinja2.Markup(format_string.format(*args, **kwargs))
+    return Markup(format_string.format(*args, **kwargs))
 
 
 @library.global_function
@@ -549,3 +562,8 @@ def show_header_fx_download(context):
         return product.slug != "firefox"
     else:
         return True
+
+
+@library.global_function
+def is_trusted_user(user):
+    return is_trusted_user_func(user)

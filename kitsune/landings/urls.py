@@ -1,4 +1,5 @@
 from django.urls import re_path
+from django.views.generic.base import RedirectView
 
 from kitsune.landings import views
 from kitsune.sumo.views import redirect_to
@@ -21,12 +22,9 @@ urlpatterns = [
         views.integrity_check,
         name="download.integrity-check",
     ),
+    re_path(r"^contribute/?.*$", views.contribute, name="landings.contribute"),
     re_path(
-        r"^get-involved/questions$",
-        views.get_involved_questions,
-        name="landings.get_involved_questions",
+        r"^get-involved/?.*$",
+        RedirectView.as_view(pattern_name="landings.contribute", permanent=True),
     ),
-    re_path(r"^get-involved/kb$", views.get_involved_kb, name="landings.get_involved_kb"),
-    re_path(r"^get-involved/l10n$", views.get_involved_l10n, name="landings.get_involved_l10n"),
-    re_path(r"^get-involved$", views.get_involved, name="landings.get_involved"),
 ]

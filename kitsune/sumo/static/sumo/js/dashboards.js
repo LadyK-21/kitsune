@@ -5,6 +5,7 @@
     initNeedsChange();
     initAnnouncements();
     initL10nStringsStats();
+    setProgressBarWidth();
   }
 
   // Hook up readout mode links (like "This Week" and "All Time") to swap
@@ -15,7 +16,7 @@
         slug = $modes.attr('data-slug');
       $modes.find('.mode').each(function() {
         var $button = $(this);
-        $button.click(function switchMode() {
+        $button.on("click", function switchMode() {
           // Dim table to convey that its data isn't what
           // the select mode indicates:
           var $table = $('#' + slug + '-table');
@@ -27,6 +28,7 @@
           $.get($button.attr('data-url'),
           function succeed(html) {
             $table.html(html).removeClass('busy');
+            setProgressBarWidth();
           });
           return false;
         });
@@ -36,32 +38,32 @@
 
   function initWatchMenu() {
     var $watchDiv = $('#doc-watch'),
-      $menu = $watchDiv.find('.popup-menu');
+        $menu = $watchDiv.find('.popup-menu');
 
     // Initialize popup menu behavior:
-    $watchDiv.find('.popup-trigger').click(function toggleMenu() {
+    $watchDiv.find('.popup-trigger').on("click", function toggleMenu() {
       $menu.toggle();
     });
 
     // Teach checkboxes to dim and post on click:
     // Dim the checkbox, post the watch change, then undim.
-    $watchDiv.find('input[type=checkbox]').click(function post() {
+    $watchDiv.find('input[type=checkbox]').on("click", function post() {
       var $box = $(this),
-        csrf = $box.closest('form').find('input[name=csrfmiddlewaretoken]').val(),
-        isChecked = $box.attr('checked');
-      $box.attr('disabled', 'disabled');
+          csrf = $box.closest('form').find('input[name=csrfmiddlewaretoken]').val(),
+          isChecked = $box.prop('checked'); // Use .prop() to get the checked state
+      $box.prop('disabled', true); // Disable the checkbox
+
       $.ajax({
         type: 'POST',
-        url: isChecked ? $box.data('action-watch')
-        : $box.data('action-unwatch'),
+        url: isChecked ? $box.data('action-watch') : $box.data('action-unwatch'),
         data: {csrfmiddlewaretoken: csrf},
         success: function() {
-          $box.attr('disabled', '');
+          $box.prop('disabled', false); // Re-enable the checkbox on success
         },
         error: function() {
-          $box.attr('checked', isChecked ? ''
-          : 'checked')
-          .attr('disabled', '');
+          // On error, revert the checked state and re-enable the checkbox
+          $box.prop('checked', !isChecked)
+              .prop('disabled', false);
         }
       });
     });
@@ -69,7 +71,7 @@
 
   function initNeedsChange() {
     // Expand rows on click
-    $('#need-changes-table tr').click(function(e) {
+    $('#need-changes-table tr').on("click", function(e) {
       // Don't expand if a link was clicked.
       if (!$(e.target).is('a')) {
         $(this).toggleClass('active');
@@ -194,5 +196,12 @@
       });
   }
 
-  $(document).ready(init);
+  function setProgressBarWidth() {
+    const graphBars = document.getElementsByClassName("absolute-graph");
+    for (const bar of graphBars) {
+      bar.style.width = bar.getAttribute("data-absolute-graph");
+    }
+  }
+
+  $(init);
 })(jQuery);

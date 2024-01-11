@@ -28,7 +28,7 @@ jQuery.fn.wrapDeleteInput = function (options) {
 
     options = $.extend({
         error_title_del: gettext('Error deleting'),
-        error_json: gettext('Please check you are logged in, and try again.'),
+        error_json: gettext('Please check you are signed in, and try again.'),
         onComplete: function() {}
     }, options);
 
@@ -59,7 +59,7 @@ jQuery.fn.wrapDeleteInput = function (options) {
             }
             var iframeJSON;
             try {
-                iframeJSON = $.parseJSON(iframeContent);
+                iframeJSON = JSON.parse(iframeContent);
             } catch(err) {
                 if (err.substr(0, 12)  === 'Invalid JSON') {
                     dialogSet(options.error_json, options.error_title_del);
@@ -111,7 +111,7 @@ jQuery.fn.ajaxSubmitInput = function (options) {
         $form = '<form class="upload-input" action="' +
                 options.url + '" target="' + iframeName +
                 '" method="post" enctype="multipart/form-data"/>',
-        $iframe = $('<iframe name="' + iframeName +
+        $iframe = $('<iframe hidden name="' + iframeName +
                    '" style="position:absolute;top:-9999px;" />')
                    //'" style="position:fixed;top:0px;width:500px;height:350px" />')
                     .appendTo('body'),
@@ -126,12 +126,12 @@ jQuery.fn.ajaxSubmitInput = function (options) {
     // add the csrfmiddlewaretoken to the upload form
     $('input[name="csrfmiddlewaretoken"]').first().clone().appendTo($form);
 
-    $iframe.load(function() {
+    $iframe.on('load', function() {
         var iframeContent = $iframe[0].contentWindow.document.body.innerHTML;
         options.onComplete($input, iframeContent, passJSON);
     });
 
-    $input.bind(options.inputEvent, function() {
+    $input.on(options.inputEvent, function() {
         passJSON = options.beforeSubmit($input);
 
         if (false === passJSON) {

@@ -6,7 +6,7 @@ import django_filters
 from django import forms
 from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
-from rest_framework import filters, pagination, permissions, serializers, status, viewsets
+from rest_framework import pagination, permissions, serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from taggit.models import Tag
@@ -26,8 +26,10 @@ from kitsune.sumo.api_utils import (
     DateTimeUTCField,
     GenericAPIException,
     OnlyCreatorEdits,
+    OrderingFilter,
     SplitSourceField,
 )
+from kitsune.sumo.utils import is_ratelimited
 from kitsune.tags.utils import add_existing_tag
 from kitsune.users.api import ProfileFKSerializer
 from kitsune.users.models import Profile
@@ -209,7 +211,7 @@ class QuestionFilter(django_filters.FilterSet):
         try:
             value = json.loads(value)
         except ValueError:
-            raise GenericAPIException(400, "metadata must be valid JSON.")
+            raise GenericAPIException(status.HTTP_400_BAD_REQUEST, "metadata must be valid JSON.")
 
         for key, values in list(value.items()):
             if not isinstance(values, list):
@@ -225,6 +227,24 @@ class QuestionFilter(django_filters.FilterSet):
         return queryset
 
 
+class HasRemoveTagPermissions(permissions.BasePermission):
+    def has_object_permission(self, request, view, obj):
+        """Simple permision check to match the one from the question view."""
+
+        if not request.user.has_perm("questions.remove_tag"):
+            return False
+        return super().has_object_permission(request, view, obj)
+
+
+class HasAddTagPermissions(permissions.BasePermission):
+    def has_object_permission(self, request, view, obj):
+        """Simple permision check to match the one from the question view."""
+
+        if not request.user.has_perm("questions.tag_question"):
+            return False
+        return super().has_object_permission(request, view, obj)
+
+
 class QuestionViewSet(viewsets.ModelViewSet):
     serializer_class = QuestionSerializer
     queryset = Question.objects.all()
@@ -236,7 +256,7 @@ class QuestionViewSet(viewsets.ModelViewSet):
     filterset_class = QuestionFilter
     filter_backends = [
         DjangoFilterBackend,
-        filters.OrderingFilter,
+        OrderingFilter,
     ]
     ordering_fields = [
         "id",
@@ -267,12 +287,18 @@ class QuestionViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
     def helpful(self, request, pk=None):
+        if is_ratelimited(request, "question-vote", "10/d"):
+            raise GenericAPIException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "You've exceeded the number of votes for questions allowed in a day.",
+            )
+
         question = self.get_object()
 
         if not question.editable:
-            raise GenericAPIException(403, "Question not editable")
+            raise GenericAPIException(status.HTTP_403_FORBIDDEN, "Question not editable")
         if question.has_voted(request):
-            raise GenericAPIException(409, "Cannot vote twice")
+            raise GenericAPIException(status.HTTP_409_CONFLICT, "Cannot vote twice")
 
         QuestionVote(question=question, creator=request.user).save()
         num_votes = QuestionVote.objects.filter(question=question).count()
@@ -282,13 +308,13 @@ class QuestionViewSet(viewsets.ModelViewSet):
     def follow(self, request, pk=None):
         question = self.get_object()
         actstream.actions.follow(request.user, question, actor_only=False, send_action=False)
-        return Response("", status=204)
+        return Response("", status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
     def unfollow(self, request, pk=None):
         question = self.get_object()
         actstream.actions.unfollow(request.user, question, send_action=False)
-        return Response("", status=204)
+        return Response("", status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["post"])
     def set_metadata(self, request, pk=None):
@@ -317,7 +343,9 @@ class QuestionViewSet(viewsets.ModelViewSet):
             meta.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
         except QuestionMetaData.DoesNotExist:
-            raise GenericAPIException(404, "No matching metadata object found.")
+            raise GenericAPIException(
+                status.HTTP_404_NOT_FOUND, "No matching metadata object found."
+            )
 
     @action(
         detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticatedOrReadOnly]
@@ -330,13 +358,21 @@ class QuestionViewSet(viewsets.ModelViewSet):
         try:
             question.take(request.user, force=force)
         except InvalidUserException:
-            raise GenericAPIException(400, "Question creator cannot take a question.")
+            raise GenericAPIException(
+                status.HTTP_400_BAD_REQUEST, "Question creator cannot take a question."
+            )
         except AlreadyTakenException:
-            raise GenericAPIException(409, "Conflict: question is already taken.")
+            raise GenericAPIException(
+                status.HTTP_409_CONFLICT, "Conflict: question is already taken."
+            )
 
-        return Response(status=204)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
-    @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[permissions.IsAuthenticated, HasAddTagPermissions],
+    )
     def add_tags(self, request, pk=None):
         question = self.get_object()
 
@@ -354,13 +390,17 @@ class QuestionViewSet(viewsets.ModelViewSet):
                 if request.user.has_perm("taggit.add_tag"):
                     question.tags.add(tag)
                 else:
-                    raise GenericAPIException(403, "You are not authorized to create new tags.")
+                    raise GenericAPIException(
+                        status.HTTP_403_FORBIDDEN, "You are not authorized to create new tags."
+                    )
 
         data = [{"name": tag.name, "slug": tag.slug} for tag in question.tags.all()]
         return Response(data)
 
     @action(
-        detail=True, methods=["post", "delete"], permission_classes=[permissions.IsAuthenticated]
+        detail=True,
+        methods=["post", "delete"],
+        permission_classes=[permissions.IsAuthenticated, HasRemoveTagPermissions],
     )
     def remove_tags(self, request, pk=None):
         question = self.get_object()
@@ -460,7 +500,7 @@ class AnswerViewSet(viewsets.ModelViewSet):
     filterset_class = AnswerFilter
     filter_backends = [
         DjangoFilterBackend,
-        filters.OrderingFilter,
+        OrderingFilter,
     ]
     filterset_fields = [
         "question",
@@ -491,12 +531,18 @@ class AnswerViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
     def helpful(self, request, pk=None):
+        if is_ratelimited(request, "answer-vote", "10/d"):
+            raise GenericAPIException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                "You've exceeded the number of votes for answers allowed in a day.",
+            )
+
         answer = self.get_object()
 
         if not answer.question.editable:
-            raise GenericAPIException(403, "Answer not editable")
+            raise GenericAPIException(status.HTTP_403_FORBIDDEN, "Answer not editable")
         if answer.has_voted(request):
-            raise GenericAPIException(409, "Cannot vote twice")
+            raise GenericAPIException(status.HTTP_409_CONFLICT, "Cannot vote twice")
 
         AnswerVote(answer=answer, creator=request.user, helpful=True).save()
         num_helpful_votes = AnswerVote.objects.filter(answer=answer, helpful=True).count()
@@ -512,10 +558,10 @@ class AnswerViewSet(viewsets.ModelViewSet):
     def follow(self, request, pk=None):
         answer = self.get_object()
         actstream.actions.follow(request.user, answer, actor_only=False)
-        return Response("", status=204)
+        return Response("", status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["post"], permission_classes=[permissions.IsAuthenticated])
     def unfollow(self, request, pk=None):
         answer = self.get_object()
         actstream.actions.unfollow(request.user, answer)
-        return Response("", status=204)
+        return Response("", status=status.HTTP_204_NO_CONTENT)

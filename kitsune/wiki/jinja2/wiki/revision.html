@@ -6,6 +6,10 @@
 {% set crumbs = [(document.get_absolute_url(), document.title),
                  (None, _('Revision {num}')|f(num=revision.id))] %}
 {% set classes = 'document' %}
+{% set scripts = ('revision',) %}
+{% if document.is_switching_devices_document %}
+  {% set scripts = scripts + ('switching-devices',) %}
+{% endif %}
 {% set meta = [('robots', 'noindex, nofollow')] %}
 
 {% block content %}
@@ -25,7 +29,7 @@
             </li>
             <li>
               <strong>{{ _('Creator:') }}</strong>
-              <span><a href="{{ profile_url(revision.creator) }}">{{ display_name(revision.creator) }}</a></span>
+              <span><a rel="nofollow" href="{{ profile_url(revision.creator) }}">{{ display_name(revision.creator) }}</a></span>
             </li>
             <li>
               <strong>{{ _('Comment:') }}</strong>

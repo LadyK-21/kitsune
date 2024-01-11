@@ -1,14 +1,15 @@
+from zoneinfo import ZoneInfo
+
 from babel.dates import format_datetime
 from django.conf import settings
 from django.contrib.sites.models import Site
-from django.utils.translation import ugettext as _
-from pytz import timezone
-from tidings.events import InstanceEvent
+from django.utils.translation import gettext as _
 
 from kitsune.questions.models import Question
 from kitsune.sumo import email_utils
 from kitsune.sumo.templatetags.jinja_helpers import add_utm, urlparams
 from kitsune.sumo.urlresolvers import reverse
+from kitsune.tidings.events import InstanceEvent
 
 
 class QuestionEvent(InstanceEvent):
@@ -60,6 +61,19 @@ class QuestionEvent(InstanceEvent):
     def _activation_url(cls, watch):
         url = reverse("questions.activate_watch", args=[watch.id, watch.secret])
         return add_utm(url, "questions-activate")
+
+    def serialize(self):
+        """
+        Serialize this event into a JSON-friendly dictionary.
+        """
+        return {
+            "event": {"module": "kitsune.questions.events", "class": "QuestionEvent"},
+            "instance": {
+                "module": "kitsune.questions.models",
+                "class": "Answer",
+                "id": self.answer.id,
+            },
+        }
 
 
 class QuestionReplyEvent(QuestionEvent):
@@ -129,7 +143,7 @@ class QuestionReplyEvent(QuestionEvent):
                 tzinfo = u.profile.timezone
             else:
                 locale = "en-US"
-                tzinfo = timezone(settings.TIME_ZONE)
+                tzinfo = ZoneInfo(settings.TIME_ZONE)
 
             c["created"] = format_datetime(
                 self.answer.created, tzinfo=tzinfo, locale=locale.replace("-", "_")
@@ -140,6 +154,19 @@ class QuestionReplyEvent(QuestionEvent):
     @classmethod
     def description_of_watch(cls, watch):
         return _("New answers for question: %s") % watch.content_object.title
+
+    def serialize(self):
+        """
+        Serialize this event into a JSON-friendly dictionary.
+        """
+        return {
+            "event": {"module": "kitsune.questions.events", "class": "QuestionReplyEvent"},
+            "instance": {
+                "module": "kitsune.questions.models",
+                "class": "Answer",
+                "id": self.answer.id,
+            },
+        }
 
 
 class QuestionSolvedEvent(QuestionEvent):
@@ -197,3 +224,16 @@ class QuestionSolvedEvent(QuestionEvent):
     def description_of_watch(cls, watch):
         question = watch.content_object
         return _("Solution found for question: %s") % question.title
+
+    def serialize(self):
+        """
+        Serialize this event into a JSON-friendly dictionary.
+        """
+        return {
+            "event": {"module": "kitsune.questions.events", "class": "QuestionSolvedEvent"},
+            "instance": {
+                "module": "kitsune.questions.models",
+                "class": "Answer",
+                "id": self.answer.id,
+            },
+        }
